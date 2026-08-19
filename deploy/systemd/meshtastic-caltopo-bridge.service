@@ -1,0 +1,25 @@
+[Unit]
+Description=Meshtastic TAK to CalTopo bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=meshtastic-bridge
+Group=meshtastic-bridge
+SupplementaryGroups=dialout
+EnvironmentFile=/etc/meshtastic-caltopo-bridge.env
+ExecStart=/usr/local/bin/meshtastic-caltopo-bridge
+Restart=on-failure
+RestartSec=5s
+StateDirectory=meshtastic-caltopo-bridge
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/meshtastic-caltopo-bridge
+
+[Install]
+WantedBy=multi-user.target
