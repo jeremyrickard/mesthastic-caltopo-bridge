@@ -33,6 +33,18 @@ func TestParseAllowsLocalCalTopoWithoutCredentials(t *testing.T) {
 	}
 }
 
+func TestParseHTTPListenAddress(t *testing.T) {
+	t.Setenv("MESHTASTIC_SERIAL_DEVICE", "/dev/test")
+	t.Setenv("HTTP_LISTEN_ADDRESS", "127.0.0.1:9090")
+	cfg, err := Parse(nil, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.HTTPListenAddress != "127.0.0.1:9090" {
+		t.Fatalf("HTTP listen address=%q", cfg.HTTPListenAddress)
+	}
+}
+
 func TestParseRejectsInvalidEnvironmentValue(t *testing.T) {
 	t.Setenv("MESHTASTIC_SERIAL_BAUD", "fast")
 	if _, err := Parse([]string{"-list-devices"}, io.Discard); err == nil {

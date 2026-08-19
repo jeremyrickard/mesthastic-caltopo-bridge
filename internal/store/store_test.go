@@ -43,6 +43,14 @@ func TestArchiveDeduplicatesPositionsButRetainsPackets(t *testing.T) {
 	if packetCount != 2 || positionCount != 1 {
 		t.Fatalf("packets=%d positions=%d", packetCount, positionCount)
 	}
+	positions, err := database.Positions(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(positions) != 1 || positions[0].Callsign != "one" ||
+		positions[0].Latitude != 40 || positions[0].Longitude != -105 {
+		t.Fatalf("positions=%+v", positions)
+	}
 	laterPacket := packet
 	laterPacket.ReceivedAt = laterPacket.ReceivedAt.Add(16 * time.Minute)
 	laterPosition := *position
@@ -50,6 +58,13 @@ func TestArchiveDeduplicatesPositionsButRetainsPackets(t *testing.T) {
 	laterPosition.SourceTime = laterPacket.ReceivedAt
 	if _, _, inserted, err := database.Archive(ctx, laterPacket, &laterPosition, true); err != nil || !inserted {
 		t.Fatalf("reused packet ID after dedupe window: inserted=%v err=%v", inserted, err)
+	}
+	positions, err = database.Positions(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(positions) != 1 || !positions[0].SourceTime.Equal(laterPosition.SourceTime) {
+		t.Fatalf("latest positions=%+v", positions)
 	}
 	deliveries, err := database.PendingDeliveries(ctx, 10)
 	if err != nil || len(deliveries) != 1 {
@@ -60,6 +75,22 @@ func TestArchiveDeduplicatesPositionsButRetainsPackets(t *testing.T) {
 	}
 	if err := database.MarkDelivered(ctx, deliveries[0].ID); err == nil {
 		t.Fatal("second delivery completion unexpectedly succeeded")
+	}
+}
+
+func TestPositionsReturnsEmptySlice(t *testing.T) {
+	database, err := Open(context.Background(), filepath.Join(t.TempDir(), "bridge.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	positions, err := database.Positions(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if positions == nil || len(positions) != 0 {
+		t.Fatalf("positions=%v", positions)
 	}
 }
 
