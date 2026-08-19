@@ -2,7 +2,8 @@
 
 A Go daemon that reads Meshtastic packets over USB serial, stores them in
 SQLite, decodes legacy ATAK position reports, and optionally publishes positions
-as CalTopo live tracks.
+as CalTopo live tracks. It also serves a Leaflet map of each node's latest
+position.
 
 Supported runtime targets:
 
@@ -91,8 +92,14 @@ For a minimal run:
 ```sh
 go run ./cmd/bridge \
   -serial-device /dev/cu.usbmodem123456 \
-  -database ./bridge.db
+  -database ./bridge.db \
+  -http-listen 127.0.0.1:8080
 ```
+
+Open [http://localhost:8080](http://localhost:8080) to view the position map.
+The initial view automatically fits the latest stored point for each node. Map
+tiles and Leaflet are loaded from public CDNs, so the browser needs internet
+access.
 
 The serial transport and CalTopo publisher are isolated behind interfaces, so
 the automated tests do not require a radio or CalTopo account.
@@ -107,6 +114,7 @@ normal service configuration mechanism.
 | `MESHTASTIC_SERIAL_DEVICE` | required | USB serial device |
 | `MESHTASTIC_SERIAL_BAUD` | `115200` | Serial baud rate |
 | `BRIDGE_DATABASE_PATH` | `bridge.db` | SQLite database |
+| `HTTP_LISTEN_ADDRESS` | `127.0.0.1:8080` | Position map listen address |
 | `CALTOPO_ENABLED` | `false` | Enable live-track delivery |
 | `CALTOPO_ENDPOINT` | `caltopo.com` | CalTopo/SARTopo or local endpoint |
 | `CALTOPO_MAP_ID` | required when enabled | Destination map ID |
@@ -121,6 +129,9 @@ Keep the environment file root-readable because it contains CalTopo credentials:
 ```sh
 chmod 600 /etc/meshtastic-caltopo-bridge.env
 ```
+
+The map has no authentication. To access it from another computer, explicitly
+bind it to a network interface and restrict port `8080` to trusted clients.
 
 The supplied systemd unit uses a private `0700` state directory and `0077`
 process umask. Correct permissions manually when upgrading an existing install.

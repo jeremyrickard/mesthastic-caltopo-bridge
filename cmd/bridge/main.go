@@ -5,18 +5,21 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"runtime"
 	"slices"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/jeremyrickard/mesthastic-caltopo-bridge/internal/caltopo"
 	"github.com/jeremyrickard/mesthastic-caltopo-bridge/internal/config"
 	"github.com/jeremyrickard/mesthastic-caltopo-bridge/internal/ingest"
 	"github.com/jeremyrickard/mesthastic-caltopo-bridge/internal/meshtastic"
 	"github.com/jeremyrickard/mesthastic-caltopo-bridge/internal/store"
+	"github.com/jeremyrickard/mesthastic-caltopo-bridge/internal/web"
 )
 
 var (
@@ -82,17 +85,39 @@ func run(logger *slog.Logger) error {
 		service.WakeDeliveries = worker.Wake
 	}
 	source := meshtastic.NewSerialSource(cfg.SerialDevice, cfg.SerialBaud, logger, service.Handle)
+	httpServer := web.NewServer(cfg.HTTPListenAddress, database, logger)
 	logger.Info("starting bridge",
 		"version", version,
 		"commit", commit,
 		"serial_device", cfg.SerialDevice,
 		"database", cfg.DatabasePath,
+		"http_listen_address", cfg.HTTPListenAddress,
 		"caltopo_enabled", cfg.CalTopo.Enabled,
 	)
-	err = source.Run(ctx)
+
+	runtimeErrors := make(chan error, 2)
+	wait.Add(2)
+	go func() {
+		defer wait.Done()
+		runtimeErrors <- source.Run(ctx)
+	}()
+	go func() {
+		defer wait.Done()
+		logger.Info("serving position map", "address", cfg.HTTPListenAddress)
+		serverErr := httpServer.ListenAndServe()
+		if errors.Is(serverErr, http.ErrServerClosed) {
+			serverErr = nil
+		}
+		runtimeErrors <- serverErr
+	}()
+
+	err = <-runtimeErrors
 	stop()
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelShutdown()
+	shutdownErr := httpServer.Shutdown(shutdownCtx)
 	wait.Wait()
-	return err
+	return errors.Join(err, shutdownErr)
 }
 
 func printDevices() error {

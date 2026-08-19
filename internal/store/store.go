@@ -206,6 +206,59 @@ func (s *Store) PendingDeliveries(ctx context.Context, limit int) ([]Delivery, e
 	return deliveries, nil
 }
 
+func (s *Store) Positions(ctx context.Context) ([]model.Position, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT p.id, p.source_node, p.mesh_packet_id, p.callsign,
+		       COALESCE(p.device_callsign, ''), p.latitude, p.longitude,
+		       p.altitude, p.speed, p.course, p.source_time, p.received_at
+		FROM tak_positions p
+		WHERE NOT EXISTS (
+			SELECT 1
+			FROM tak_positions newer
+			WHERE newer.source_node = p.source_node
+			  AND (
+				newer.source_time > p.source_time OR
+				(newer.source_time = p.source_time AND newer.id > p.id)
+			  )
+		)
+		ORDER BY p.source_time, p.id`)
+	if err != nil {
+		return nil, fmt.Errorf("query TAK positions: %w", err)
+	}
+	defer rows.Close()
+
+	positions := make([]model.Position, 0)
+	for rows.Next() {
+		var position model.Position
+		var altitude, speed, course sql.NullFloat64
+		var sourceTime, receivedAt string
+		if err := rows.Scan(
+			&position.PacketID, &position.SourceNode, &position.MeshPacketID,
+			&position.Callsign, &position.DeviceCallsign,
+			&position.Latitude, &position.Longitude,
+			&altitude, &speed, &course, &sourceTime, &receivedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan TAK position: %w", err)
+		}
+		position.Altitude = floatPointer(altitude)
+		position.Speed = floatPointer(speed)
+		position.Course = floatPointer(course)
+		position.SourceTime, err = parseTime(sourceTime)
+		if err != nil {
+			return nil, err
+		}
+		position.ReceivedAt, err = parseTime(receivedAt)
+		if err != nil {
+			return nil, err
+		}
+		positions = append(positions, position)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate TAK positions: %w", err)
+	}
+	return positions, nil
+}
+
 func (s *Store) MarkDelivered(ctx context.Context, deliveryID int64) error {
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE caltopo_deliveries

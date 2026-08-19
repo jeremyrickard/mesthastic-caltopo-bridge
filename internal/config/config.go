@@ -12,12 +12,13 @@ import (
 )
 
 type Config struct {
-	SerialDevice string
-	SerialBaud   int
-	DatabasePath string
-	ListDevices  bool
-	Version      bool
-	CalTopo      CalTopo
+	SerialDevice      string
+	SerialBaud        int
+	DatabasePath      string
+	HTTPListenAddress string
+	ListDevices       bool
+	Version           bool
+	CalTopo           CalTopo
 }
 
 type CalTopo struct {
@@ -45,9 +46,10 @@ func Parse(args []string, stderr io.Writer) (Config, error) {
 		return Config{}, err
 	}
 	cfg := Config{
-		SerialDevice: env("MESHTASTIC_SERIAL_DEVICE", ""),
-		SerialBaud:   serialBaud,
-		DatabasePath: env("BRIDGE_DATABASE_PATH", "bridge.db"),
+		SerialDevice:      env("MESHTASTIC_SERIAL_DEVICE", ""),
+		SerialBaud:        serialBaud,
+		DatabasePath:      env("BRIDGE_DATABASE_PATH", "bridge.db"),
+		HTTPListenAddress: env("HTTP_LISTEN_ADDRESS", "127.0.0.1:8080"),
 		CalTopo: CalTopo{
 			Enabled:      calTopoEnabled,
 			Endpoint:     env("CALTOPO_ENDPOINT", "caltopo.com"),
@@ -65,6 +67,7 @@ func Parse(args []string, stderr io.Writer) (Config, error) {
 	fs.StringVar(&cfg.SerialDevice, "serial-device", cfg.SerialDevice, "Meshtastic serial device path")
 	fs.IntVar(&cfg.SerialBaud, "serial-baud", cfg.SerialBaud, "serial baud rate")
 	fs.StringVar(&cfg.DatabasePath, "database", cfg.DatabasePath, "SQLite database path")
+	fs.StringVar(&cfg.HTTPListenAddress, "http-listen", cfg.HTTPListenAddress, "HTTP map listen address")
 	fs.BoolVar(&cfg.ListDevices, "list-devices", false, "list serial devices and exit")
 	fs.BoolVar(&cfg.Version, "version", false, "print version and exit")
 	fs.BoolVar(&cfg.CalTopo.Enabled, "caltopo", cfg.CalTopo.Enabled, "enable CalTopo live-track publishing")
@@ -93,6 +96,9 @@ func (c Config) Validate() error {
 	}
 	if c.DatabasePath == "" {
 		errs = append(errs, errors.New("database path is required"))
+	}
+	if c.HTTPListenAddress == "" {
+		errs = append(errs, errors.New("HTTP listen address is required"))
 	}
 	if c.CalTopo.Enabled {
 		if c.CalTopo.MapID == "" {
