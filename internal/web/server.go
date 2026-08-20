@@ -145,7 +145,10 @@ const mapHTML = `<!doctype html>
           marker.bindPopup(popup);
           bounds.push(point);
         }
-        if (bounds.length > 0) {
+        if (bounds.length === 1) {
+          map.setView(bounds[0], 16);
+          status.hidden = true;
+        } else if (bounds.length > 1) {
           map.fitBounds(bounds, { padding: [30, 30], maxZoom: 16 });
           status.hidden = true;
         } else {

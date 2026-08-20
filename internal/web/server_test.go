@@ -34,6 +34,7 @@ func TestMapFitsPositionBounds(t *testing.T) {
 	}
 	body := response.Body.String()
 	if !strings.Contains(body, `fetch("/api/positions"`) ||
+		!strings.Contains(body, "map.setView(bounds[0], 16)") ||
 		!strings.Contains(body, "map.fitBounds(bounds") {
 		t.Fatalf("map page does not load and fit position bounds")
 	}
