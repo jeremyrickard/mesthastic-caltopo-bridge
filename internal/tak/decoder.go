@@ -56,6 +56,14 @@ func Decode(packet *pb.MeshPacket, receivedAt time.Time) (model.Packet, *model.P
 	record.Port = int32(data.GetPortnum())
 	record.RawPayload = append([]byte(nil), data.GetPayload()...)
 	switch data.GetPortnum() {
+	case pb.PortNum_POSITION_APP:
+		position, err := decodePosition(record, data.GetPayload())
+		if err == nil {
+			record.ParseStatus = "position"
+			return record, position
+		}
+		record.ParseStatus = "malformed"
+		record.ParseError = err.Error()
 	case pb.PortNum_ATAK_PLUGIN:
 		position, err := decodeLegacy(record, data.GetPayload())
 		switch {
@@ -80,6 +88,49 @@ func Decode(packet *pb.MeshPacket, receivedAt time.Time) (model.Packet, *model.P
 	return record, nil
 }
 
+func decodePosition(packet model.Packet, payload []byte) (*model.Position, error) {
+	var meshPosition pb.Position
+	if err := proto.Unmarshal(payload, &meshPosition); err != nil {
+		return nil, fmt.Errorf("decode Meshtastic position: %w", err)
+	}
+	if !meshPosition.HasLatitudeI() || !meshPosition.HasLongitudeI() {
+		return nil, errors.New("Meshtastic position is missing coordinates")
+	}
+
+	position, err := newPosition(
+		packet,
+		float64(meshPosition.GetLatitudeI())*1e-7,
+		float64(meshPosition.GetLongitudeI())*1e-7,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if timestamp := meshPosition.GetTimestamp(); timestamp != 0 {
+		position.SourceTime = time.Unix(
+			int64(timestamp),
+			int64(meshPosition.GetTimestampMillisAdjust())*int64(time.Millisecond),
+		).UTC()
+	} else if timestamp := meshPosition.GetTime(); timestamp != 0 {
+		position.SourceTime = time.Unix(int64(timestamp), 0).UTC()
+	}
+	if meshPosition.HasAltitude() {
+		value := float64(meshPosition.GetAltitude())
+		position.Altitude = &value
+	} else if meshPosition.HasAltitudeHae() {
+		value := float64(meshPosition.GetAltitudeHae())
+		position.Altitude = &value
+	}
+	if meshPosition.HasGroundSpeed() {
+		value := float64(meshPosition.GetGroundSpeed())
+		position.Speed = &value
+	}
+	if meshPosition.HasGroundTrack() {
+		value := float64(meshPosition.GetGroundTrack()) / 100
+		position.Course = &value
+	}
+	return position, nil
+}
+
 func decodeLegacy(packet model.Packet, payload []byte) (*model.Position, error) {
 	var takPacket pb.TAKPacket
 	if err := proto.Unmarshal(payload, &takPacket); err != nil {
@@ -94,26 +145,12 @@ func decodeLegacy(packet model.Packet, payload []byte) (*model.Position, error) 
 	}
 	latitude := float64(pli.GetLatitudeI()) * 1e-7
 	longitude := float64(pli.GetLongitudeI()) * 1e-7
-	if math.IsNaN(latitude) || latitude < -90 || latitude > 90 {
-		return nil, fmt.Errorf("invalid latitude %.7f", latitude)
+	position, err := newPosition(packet, latitude, longitude)
+	if err != nil {
+		return nil, err
 	}
-	if math.IsNaN(longitude) || longitude < -180 || longitude > 180 {
-		return nil, fmt.Errorf("invalid longitude %.7f", longitude)
-	}
-	sourceTime := packet.ReceivedAt
-	if packetTime := timeFromPacket(packet); !packetTime.IsZero() {
-		sourceTime = packetTime
-	}
-	position := &model.Position{
-		SourceNode:     packet.From,
-		MeshPacketID:   packet.MeshPacketID,
-		Callsign:       strings.TrimSpace(takPacket.GetContact().GetCallsign()),
-		DeviceCallsign: strings.TrimSpace(takPacket.GetContact().GetDeviceCallsign()),
-		Latitude:       latitude,
-		Longitude:      longitude,
-		SourceTime:     sourceTime,
-		ReceivedAt:     packet.ReceivedAt,
-	}
+	position.Callsign = strings.TrimSpace(takPacket.GetContact().GetCallsign())
+	position.DeviceCallsign = strings.TrimSpace(takPacket.GetContact().GetDeviceCallsign())
 	if position.Callsign == "" {
 		position.Callsign = model.NodeID(packet.From)
 	}
@@ -128,6 +165,29 @@ func decodeLegacy(packet model.Packet, payload []byte) (*model.Position, error) 
 	if course := pli.GetCourse(); course != 0 {
 		value := float64(course)
 		position.Course = &value
+	}
+	return position, nil
+}
+
+func newPosition(packet model.Packet, latitude, longitude float64) (*model.Position, error) {
+	if math.IsNaN(latitude) || latitude < -90 || latitude > 90 {
+		return nil, fmt.Errorf("invalid latitude %.7f", latitude)
+	}
+	if math.IsNaN(longitude) || longitude < -180 || longitude > 180 {
+		return nil, fmt.Errorf("invalid longitude %.7f", longitude)
+	}
+	sourceTime := packet.ReceivedAt
+	if packetTime := timeFromPacket(packet); !packetTime.IsZero() {
+		sourceTime = packetTime
+	}
+	position := &model.Position{
+		SourceNode:   packet.From,
+		MeshPacketID: packet.MeshPacketID,
+		Callsign:     model.NodeID(packet.From),
+		Latitude:     latitude,
+		Longitude:    longitude,
+		SourceTime:   sourceTime,
+		ReceivedAt:   packet.ReceivedAt,
 	}
 	return position, nil
 }

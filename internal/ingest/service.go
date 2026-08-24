@@ -36,12 +36,14 @@ func (s *Service) Handle(ctx context.Context, message *pb.FromRadio) error {
 	}
 	if device := message.GetConfig().GetDevice(); device != nil {
 		role := device.GetRole()
-		if role != pb.Config_DeviceConfig_TAK && role != pb.Config_DeviceConfig_TAK_TRACKER {
-			logger.Warn("attached radio is not configured for a TAK role; port-72 decompression may be unavailable",
+		if role != pb.Config_DeviceConfig_TRACKER &&
+			role != pb.Config_DeviceConfig_TAK &&
+			role != pb.Config_DeviceConfig_TAK_TRACKER {
+			logger.Warn("attached radio is not configured for a supported tracking role",
 				"role", role.String(),
 			)
 		} else {
-			logger.Info("verified Meshtastic TAK role", "role", role.String())
+			logger.Info("verified Meshtastic tracking role", "role", role.String())
 		}
 		return nil
 	}
@@ -62,7 +64,7 @@ func (s *Service) Handle(ctx context.Context, message *pb.FromRadio) error {
 		s.logEncrypted(logger, record)
 	}
 	if position != nil && inserted {
-		logger.Info("archived TAK position",
+		logger.Info("archived Meshtastic position",
 			"packet_row_id", packetID,
 			"position_row_id", positionID,
 			"source", position.SourceID(),
