@@ -94,6 +94,44 @@ func TestPositionsReturnsEmptySlice(t *testing.T) {
 	}
 }
 
+func TestSaveNodeResolvesExistingPositionName(t *testing.T) {
+	ctx := context.Background()
+	database, err := Open(ctx, filepath.Join(t.TempDir(), "bridge.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	now := time.Now().UTC()
+	packet := model.Packet{
+		From: 42, MeshPacketID: 7, Port: 3, ReceivedAt: now,
+		RawPacket: []byte{1}, RawPayload: []byte{2}, ParseStatus: "position",
+	}
+	position := &model.Position{
+		SourceNode: 42, MeshPacketID: 7, Callsign: "!0000002a",
+		Latitude: 40, Longitude: -105, SourceTime: now, ReceivedAt: now,
+	}
+	if _, _, _, err := database.Archive(ctx, packet, position, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.SaveNode(ctx, model.Node{
+		Number: 42, ID: "!0000002a", LongName: "Team 42", ShortName: "42",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	node, found, err := database.Node(ctx, 42)
+	if err != nil || !found || node.LongName != "Team 42" {
+		t.Fatalf("node=%+v found=%v err=%v", node, found, err)
+	}
+	positions, err := database.Positions(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(positions) != 1 || positions[0].Callsign != "Team 42" ||
+		positions[0].DeviceCallsign != "42" {
+		t.Fatalf("positions=%+v", positions)
+	}
+}
+
 func TestDeliveryFailureAndTrackMapping(t *testing.T) {
 	ctx := context.Background()
 	database, err := Open(ctx, filepath.Join(t.TempDir(), "bridge.db"))

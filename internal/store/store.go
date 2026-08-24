@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/jeremyrickard/mesthastic-caltopo-bridge/internal/model"
@@ -60,6 +61,69 @@ func (s *Store) initialize(ctx context.Context) error {
 
 func (s *Store) Close() error {
 	return s.db.Close()
+}
+
+func (s *Store) SaveNode(ctx context.Context, node model.Node) error {
+	if node.Number == 0 {
+		return errors.New("save node: node number is required")
+	}
+	node.ID = strings.TrimSpace(node.ID)
+	node.LongName = strings.TrimSpace(node.LongName)
+	node.ShortName = strings.TrimSpace(node.ShortName)
+	if node.ID == "" {
+		node.ID = model.NodeID(node.Number)
+	}
+	if node.LongName == "" {
+		node.LongName = node.ID
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin node update: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO mesh_nodes (node_number, node_id, long_name, short_name, updated_at)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(node_number) DO UPDATE SET
+			node_id = excluded.node_id,
+			long_name = excluded.long_name,
+			short_name = excluded.short_name,
+			updated_at = excluded.updated_at`,
+		node.Number, node.ID, node.LongName, nullableString(node.ShortName),
+		formatTime(time.Now().UTC()),
+	); err != nil {
+		return fmt.Errorf("save node: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE tak_positions
+		SET callsign = ?, device_callsign = ?
+		WHERE source_node = ? AND callsign = ?`,
+		node.LongName, nullableString(node.ShortName), node.Number, model.NodeID(node.Number),
+	); err != nil {
+		return fmt.Errorf("update stored position names: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit node update: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) Node(ctx context.Context, number uint32) (model.Node, bool, error) {
+	var node model.Node
+	err := s.db.QueryRowContext(ctx, `
+		SELECT node_number, node_id, long_name, COALESCE(short_name, '')
+		FROM mesh_nodes
+		WHERE node_number = ?`,
+		number,
+	).Scan(&node.Number, &node.ID, &node.LongName, &node.ShortName)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.Node{}, false, nil
+	}
+	if err != nil {
+		return model.Node{}, false, fmt.Errorf("query node: %w", err)
+	}
+	return node, true, nil
 }
 
 func (s *Store) Archive(ctx context.Context, packet model.Packet, position *model.Position, enqueue bool) (int64, int64, bool, error) {
@@ -409,6 +473,14 @@ CREATE TABLE IF NOT EXISTS mesh_packets (
 );
 CREATE INDEX IF NOT EXISTS mesh_packets_received_at_idx ON mesh_packets(received_at);
 CREATE INDEX IF NOT EXISTS mesh_packets_source_idx ON mesh_packets(source_node, mesh_packet_id);
+
+CREATE TABLE IF NOT EXISTS mesh_nodes (
+	node_number INTEGER PRIMARY KEY,
+	node_id TEXT NOT NULL,
+	long_name TEXT NOT NULL,
+	short_name TEXT,
+	updated_at TEXT NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS tak_positions (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,

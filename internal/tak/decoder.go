@@ -82,6 +82,8 @@ func Decode(packet *pb.MeshPacket, receivedAt time.Time) (model.Packet, *model.P
 		record.ParseStatus = "unsupported_atak_v2"
 	case pb.PortNum_ATAK_FORWARDER:
 		record.ParseStatus = "unsupported_atak_forwarder"
+	case pb.PortNum_NODEINFO_APP:
+		record.ParseStatus = "node_info"
 	default:
 		record.ParseStatus = "non_tak"
 	}
