@@ -78,6 +78,7 @@ func run(logger *slog.Logger) error {
 
 	service := &ingest.Service{
 		Store:          database,
+		Nodes:          database,
 		EnqueueCalTopo: cfg.CalTopo.Enabled,
 		Logger:         logger,
 	}

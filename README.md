@@ -16,8 +16,9 @@ Supported runtime targets:
 
 The bridge decodes standard Meshtastic position reports from port 3
 (`POSITION_APP`), emitted by the `TRACKER` firmware role. Because these reports
-do not contain a contact name, the Meshtastic node ID is used as the CalTopo
-track name. Legacy ATAK position reports from port 72 (`ATAK_PLUGIN`) remain
+do not contain a contact name, the bridge correlates them with the radio names
+received through Meshtastic node info. The node ID is used until that node info
+arrives. Legacy ATAK position reports from port 72 (`ATAK_PLUGIN`) remain
 supported. Every received mesh packet is archived, including raw decoded
 payloads or ciphertext. Ports 78 (`ATAK_PLUGIN_V2`) and 257 (`ATAK_FORWARDER`)
 are identified and stored but are not decoded because their encodings and
