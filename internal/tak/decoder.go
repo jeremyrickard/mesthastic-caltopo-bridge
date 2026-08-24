@@ -56,14 +56,6 @@ func Decode(packet *pb.MeshPacket, receivedAt time.Time) (model.Packet, *model.P
 	record.Port = int32(data.GetPortnum())
 	record.RawPayload = append([]byte(nil), data.GetPayload()...)
 	switch data.GetPortnum() {
-	case pb.PortNum_POSITION_APP:
-		position, err := decodePosition(record, data.GetPayload())
-		if err == nil {
-			record.ParseStatus = "position"
-			return record, position
-		}
-		record.ParseStatus = "malformed"
-		record.ParseError = err.Error()
 	case pb.PortNum_ATAK_PLUGIN:
 		position, err := decodeLegacy(record, data.GetPayload())
 		switch {
@@ -82,55 +74,10 @@ func Decode(packet *pb.MeshPacket, receivedAt time.Time) (model.Packet, *model.P
 		record.ParseStatus = "unsupported_atak_v2"
 	case pb.PortNum_ATAK_FORWARDER:
 		record.ParseStatus = "unsupported_atak_forwarder"
-	case pb.PortNum_NODEINFO_APP:
-		record.ParseStatus = "node_info"
 	default:
 		record.ParseStatus = "non_tak"
 	}
 	return record, nil
-}
-
-func decodePosition(packet model.Packet, payload []byte) (*model.Position, error) {
-	var meshPosition pb.Position
-	if err := proto.Unmarshal(payload, &meshPosition); err != nil {
-		return nil, fmt.Errorf("decode Meshtastic position: %w", err)
-	}
-	if !meshPosition.HasLatitudeI() || !meshPosition.HasLongitudeI() {
-		return nil, errors.New("Meshtastic position is missing coordinates")
-	}
-
-	position, err := newPosition(
-		packet,
-		float64(meshPosition.GetLatitudeI())*1e-7,
-		float64(meshPosition.GetLongitudeI())*1e-7,
-	)
-	if err != nil {
-		return nil, err
-	}
-	if timestamp := meshPosition.GetTimestamp(); timestamp != 0 {
-		position.SourceTime = time.Unix(
-			int64(timestamp),
-			int64(meshPosition.GetTimestampMillisAdjust())*int64(time.Millisecond),
-		).UTC()
-	} else if timestamp := meshPosition.GetTime(); timestamp != 0 {
-		position.SourceTime = time.Unix(int64(timestamp), 0).UTC()
-	}
-	if meshPosition.HasAltitude() {
-		value := float64(meshPosition.GetAltitude())
-		position.Altitude = &value
-	} else if meshPosition.HasAltitudeHae() {
-		value := float64(meshPosition.GetAltitudeHae())
-		position.Altitude = &value
-	}
-	if meshPosition.HasGroundSpeed() {
-		value := float64(meshPosition.GetGroundSpeed())
-		position.Speed = &value
-	}
-	if meshPosition.HasGroundTrack() {
-		value := float64(meshPosition.GetGroundTrack()) / 100
-		position.Course = &value
-	}
-	return position, nil
 }
 
 func decodeLegacy(packet model.Packet, payload []byte) (*model.Position, error) {

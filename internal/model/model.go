@@ -38,13 +38,6 @@ type Position struct {
 	ReceivedAt     time.Time
 }
 
-type Node struct {
-	Number    uint32
-	ID        string
-	LongName  string
-	ShortName string
-}
-
 func (p Position) SourceID() string {
 	return NodeID(p.SourceNode)
 }

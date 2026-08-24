@@ -41,51 +41,6 @@ func TestDecodeLegacyPosition(t *testing.T) {
 	}
 }
 
-func TestDecodeTrackerPosition(t *testing.T) {
-	payload, err := proto.Marshal(&pb.Position{
-		LatitudeI:             proto.Int32(398765432),
-		LongitudeI:            proto.Int32(-1041234567),
-		Altitude:              proto.Int32(0),
-		Timestamp:             1_700_000_000,
-		TimestampMillisAdjust: 250,
-		GroundSpeed:           proto.Uint32(12),
-		GroundTrack:           proto.Uint32(27125),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	receivedAt := time.Unix(1_700_000_100, 0)
-	record, position := Decode(decodedPacket(pb.PortNum_POSITION_APP, payload), receivedAt)
-	if record.ParseStatus != "position" || position == nil {
-		t.Fatalf("status=%q error=%q position=%v", record.ParseStatus, record.ParseError, position)
-	}
-	if math.Abs(position.Latitude-39.8765432) > 1e-9 || math.Abs(position.Longitude+104.1234567) > 1e-9 {
-		t.Fatalf("unexpected coordinates: %.7f, %.7f", position.Latitude, position.Longitude)
-	}
-	if position.Callsign != "!00001234" || position.Altitude == nil || *position.Altitude != 0 {
-		t.Fatalf("unexpected position: %+v", position)
-	}
-	if position.Speed == nil || *position.Speed != 12 || position.Course == nil || *position.Course != 271.25 {
-		t.Fatalf("unexpected movement: speed=%v course=%v", position.Speed, position.Course)
-	}
-	expectedTime := time.Unix(1_700_000_000, 250*int64(time.Millisecond))
-	if !position.SourceTime.Equal(expectedTime) {
-		t.Fatalf("source time=%v, want %v", position.SourceTime, expectedTime)
-	}
-}
-
-func TestDecodeTrackerPositionRequiresCoordinates(t *testing.T) {
-	payload, err := proto.Marshal(&pb.Position{LatitudeI: proto.Int32(0)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	record, position := Decode(decodedPacket(pb.PortNum_POSITION_APP, payload), time.Now())
-	if record.ParseStatus != "malformed" || position != nil ||
-		record.ParseError != "Meshtastic position is missing coordinates" {
-		t.Fatalf("status=%q error=%q position=%v", record.ParseStatus, record.ParseError, position)
-	}
-}
-
 func TestDecodeClassifiesTraffic(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -108,6 +63,11 @@ func TestDecodeClassifiesTraffic(t *testing.T) {
 			name:   "forwarder",
 			packet: decodedPacket(pb.PortNum_ATAK_FORWARDER, []byte("data")),
 			status: "unsupported_atak_forwarder",
+		},
+		{
+			name:   "standard position",
+			packet: decodedPacket(pb.PortNum_POSITION_APP, []byte{0xff}),
+			status: "non_tak",
 		},
 		{
 			name:   "malformed",

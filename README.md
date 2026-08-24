@@ -1,9 +1,9 @@
-# Meshtastic to CalTopo Bridge
+# Meshtastic TAK to CalTopo Bridge
 
 A Go daemon that reads Meshtastic packets over USB serial, stores them in
-SQLite, decodes standard Meshtastic and legacy ATAK position reports, and
-optionally publishes positions as CalTopo live tracks. It also serves a Leaflet
-map of each node's latest position.
+SQLite, decodes legacy ATAK position reports, and optionally publishes positions
+as CalTopo live tracks. It also serves a Leaflet map of each node's latest
+position.
 
 Supported runtime targets:
 
@@ -14,15 +14,11 @@ Supported runtime targets:
 
 ## Current protocol scope
 
-The bridge decodes standard Meshtastic position reports from port 3
-(`POSITION_APP`), emitted by the `TRACKER` firmware role. Because these reports
-do not contain a contact name, the bridge correlates them with the radio names
-received through Meshtastic node info. The node ID is used until that node info
-arrives. Legacy ATAK position reports from port 72 (`ATAK_PLUGIN`) remain
-supported. Every received mesh packet is archived, including raw decoded
-payloads or ciphertext. Ports 78 (`ATAK_PLUGIN_V2`) and 257 (`ATAK_FORWARDER`)
-are identified and stored but are not decoded because their encodings and
-ecosystem support are still evolving.
+The bridge decodes position reports from Meshtastic port 72 (`ATAK_PLUGIN`),
+used by current `TAK` and `TAK_TRACKER` firmware roles. Every received mesh
+packet is archived, including raw decoded payloads or ciphertext. Ports 78
+(`ATAK_PLUGIN_V2`) and 257 (`ATAK_FORWARDER`) are identified and stored but are
+not decoded because their encodings and ecosystem support are still evolving.
 
 The attached radio performs Meshtastic channel/PKI decryption before forwarding
 packets to the serial client. Configure the private channel key on the radio, not
@@ -31,10 +27,11 @@ produce a rate-limited warning.
 
 ## Radio setup
 
-1. Configure the Meshtastic radios with the same channels and private keys.
-2. Use the `TRACKER` role for position-reporting nodes, including the radio
-   attached to this bridge if it also reports its own position. Legacy `TAK` and
-   `TAK_TRACKER` nodes remain supported.
+1. Configure the Meshtastic radio with the channels and private keys used by the
+   TAK devices.
+2. Use `TAK` or `TAK_TRACKER` for position-reporting nodes. The radio attached
+   to the bridge may use a forwarding role such as `ROUTER_LATE` when it only
+   receives and relays their packets.
 3. Leave the serial interface enabled.
 4. Avoid the public default channel key (`AQ==`) for operational traffic.
 5. Connect the radio over USB and find its serial path:
@@ -144,7 +141,7 @@ process umask. Correct permissions manually when upgrading an existing install.
 SQLite runs in WAL mode and stores:
 
 - every received mesh packet and raw payload/ciphertext;
-- normalized Meshtastic and legacy TAK position reports;
+- normalized legacy TAK position reports;
 - stable Meshtastic node-to-CalTopo live-track mappings;
 - durable CalTopo delivery attempts and error details.
 
@@ -196,7 +193,7 @@ CalTopo support uses the unofficial API exposed by
 The dependency is pinned to an exact commit until it receives a stable release.
 Each Meshtastic source node maps to one `FLEET:<group>-<node>` live track.
 
-The API does not accept the original position timestamp, so this daemon suppresses
+The API does not accept the original TAK timestamp, so this daemon suppresses
 duplicates and preserves ordering before publishing. Delivery errors and attempt counts remain in SQLite until a later retry succeeds.
 
 ## License
