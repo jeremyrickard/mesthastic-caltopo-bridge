@@ -45,6 +45,27 @@ func TestParseHTTPListenAddress(t *testing.T) {
 	}
 }
 
+func TestParseDebug(t *testing.T) {
+	t.Setenv("MESHTASTIC_SERIAL_DEVICE", "/dev/test")
+	t.Setenv("BRIDGE_DEBUG", "true")
+	cfg, err := Parse(nil, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Debug {
+		t.Fatal("debug logging was not enabled")
+	}
+
+	t.Setenv("BRIDGE_DEBUG", "false")
+	cfg, err = Parse([]string{"-debug"}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Debug {
+		t.Fatal("-debug did not enable debug logging")
+	}
+}
+
 func TestParseRejectsInvalidEnvironmentValue(t *testing.T) {
 	t.Setenv("MESHTASTIC_SERIAL_BAUD", "fast")
 	if _, err := Parse([]string{"-list-devices"}, io.Discard); err == nil {

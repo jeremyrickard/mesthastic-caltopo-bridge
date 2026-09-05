@@ -2,6 +2,7 @@ package meshtastic
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 
 	pb "buf.build/gen/go/meshtastic/protobufs/protocolbuffers/go/meshtastic"
 	"go.bug.st/serial"
+	"google.golang.org/protobuf/encoding/prototext"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -22,9 +24,10 @@ type Source struct {
 	Open    Opener
 	Handler Handler
 	Logger  *slog.Logger
+	Debug   bool
 }
 
-func NewSerialSource(device string, baud int, logger *slog.Logger, handler Handler) *Source {
+func NewSerialSource(device string, baud int, debug bool, logger *slog.Logger, handler Handler) *Source {
 	return &Source{
 		Open: func() (io.ReadWriteCloser, error) {
 			port, err := serial.Open(device, &serial.Mode{BaudRate: baud})
@@ -39,6 +42,7 @@ func NewSerialSource(device string, baud int, logger *slog.Logger, handler Handl
 		},
 		Handler: handler,
 		Logger:  logger,
+		Debug:   debug,
 	}
 }
 
@@ -110,6 +114,12 @@ func (s *Source) consume(ctx context.Context, port io.ReadWriter, logger *slog.L
 		}
 		n, readErr := port.Read(buf)
 		if n > 0 {
+			if s.Debug {
+				logger.Info("radio debug: received serial data",
+					"byte_count", n,
+					"data_hex", hex.EncodeToString(buf[:n]),
+				)
+			}
 			frames, frameErrs := framer.Push(buf[:n])
 			for _, frameErr := range frameErrs {
 				logger.Warn("discarding invalid serial frame", "error", frameErr)
@@ -119,6 +129,12 @@ func (s *Source) consume(ctx context.Context, port io.ReadWriter, logger *slog.L
 				if err := proto.Unmarshal(encoded, &message); err != nil {
 					logger.Warn("discarding invalid FromRadio protobuf", "error", err)
 					continue
+				}
+				if s.Debug {
+					logger.Info("radio debug: decoded FromRadio message",
+						"byte_count", len(encoded),
+						"message", prototext.Format(&message),
+					)
 				}
 				handlerBackoff := time.Second
 				for {
