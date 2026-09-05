@@ -3,6 +3,7 @@ package meshtastic
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"io"
 	"log/slog"
 	"testing"
@@ -88,6 +89,41 @@ func TestSourceConsumeWritesHandshakeAndReadsMessage(t *testing.T) {
 	}
 	if !request.HasWantConfigId() {
 		t.Fatal("handshake did not request configuration")
+	}
+}
+
+func TestSourceDebugLogsSerialDataAndDecodedMessage(t *testing.T) {
+	packet := &pb.FromRadio{}
+	packet.SetPacket(&pb.MeshPacket{From: 42})
+	encoded, err := proto.Marshal(packet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame, err := EncodeFrame(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var logs bytes.Buffer
+	source := Source{
+		Debug:  true,
+		Logger: slog.New(slog.NewTextHandler(&logs, nil)),
+		Handler: func(_ context.Context, _ *pb.FromRadio) error {
+			return nil
+		},
+	}
+	err = source.consume(context.Background(), &memoryPort{reader: bytes.NewReader(frame)}, source.Logger)
+	if err != io.EOF {
+		t.Fatalf("consume error = %v, want EOF", err)
+	}
+	output := logs.String()
+	if !bytes.Contains([]byte(output), []byte("radio debug: received serial data")) ||
+		!bytes.Contains([]byte(output), []byte("data_hex="+hex.EncodeToString(frame))) {
+		t.Fatalf("raw serial data was not logged: %s", output)
+	}
+	if !bytes.Contains([]byte(output), []byte("radio debug: decoded FromRadio message")) ||
+		!bytes.Contains([]byte(output), []byte("from:  42")) {
+		t.Fatalf("decoded message was not logged: %s", output)
 	}
 }
 

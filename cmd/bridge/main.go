@@ -84,7 +84,7 @@ func run(logger *slog.Logger) error {
 	if worker != nil {
 		service.WakeDeliveries = worker.Wake
 	}
-	source := meshtastic.NewSerialSource(cfg.SerialDevice, cfg.SerialBaud, logger, service.Handle)
+	source := meshtastic.NewSerialSource(cfg.SerialDevice, cfg.SerialBaud, cfg.Debug, logger, service.Handle)
 	httpServer := web.NewServer(cfg.HTTPListenAddress, database, logger)
 	logger.Info("starting bridge",
 		"version", version,
@@ -93,6 +93,7 @@ func run(logger *slog.Logger) error {
 		"database", cfg.DatabasePath,
 		"http_listen_address", cfg.HTTPListenAddress,
 		"caltopo_enabled", cfg.CalTopo.Enabled,
+		"debug", cfg.Debug,
 	)
 
 	runtimeErrors := make(chan error, 2)

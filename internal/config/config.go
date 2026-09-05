@@ -16,6 +16,7 @@ type Config struct {
 	SerialBaud        int
 	DatabasePath      string
 	HTTPListenAddress string
+	Debug             bool
 	ListDevices       bool
 	Version           bool
 	CalTopo           CalTopo
@@ -45,11 +46,16 @@ func Parse(args []string, stderr io.Writer) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	debug, err := envBool("BRIDGE_DEBUG", false)
+	if err != nil {
+		return Config{}, err
+	}
 	cfg := Config{
 		SerialDevice:      env("MESHTASTIC_SERIAL_DEVICE", ""),
 		SerialBaud:        serialBaud,
 		DatabasePath:      env("BRIDGE_DATABASE_PATH", "bridge.db"),
 		HTTPListenAddress: env("HTTP_LISTEN_ADDRESS", "127.0.0.1:8080"),
+		Debug:             debug,
 		CalTopo: CalTopo{
 			Enabled:      calTopoEnabled,
 			Endpoint:     env("CALTOPO_ENDPOINT", "caltopo.com"),
@@ -68,6 +74,7 @@ func Parse(args []string, stderr io.Writer) (Config, error) {
 	fs.IntVar(&cfg.SerialBaud, "serial-baud", cfg.SerialBaud, "serial baud rate")
 	fs.StringVar(&cfg.DatabasePath, "database", cfg.DatabasePath, "SQLite database path")
 	fs.StringVar(&cfg.HTTPListenAddress, "http-listen", cfg.HTTPListenAddress, "HTTP map listen address")
+	fs.BoolVar(&cfg.Debug, "debug", cfg.Debug, "log all data received from the Meshtastic radio")
 	fs.BoolVar(&cfg.ListDevices, "list-devices", false, "list serial devices and exit")
 	fs.BoolVar(&cfg.Version, "version", false, "print version and exit")
 	fs.BoolVar(&cfg.CalTopo.Enabled, "caltopo", cfg.CalTopo.Enabled, "enable CalTopo live-track publishing")

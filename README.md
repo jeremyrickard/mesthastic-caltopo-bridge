@@ -115,6 +115,7 @@ normal service configuration mechanism.
 | `MESHTASTIC_SERIAL_BAUD` | `115200` | Serial baud rate |
 | `BRIDGE_DATABASE_PATH` | `bridge.db` | SQLite database |
 | `HTTP_LISTEN_ADDRESS` | `127.0.0.1:8080` | Position map listen address |
+| `BRIDGE_DEBUG` | `false` | Log every raw serial read and decoded radio message |
 | `CALTOPO_ENABLED` | `false` | Enable live-track delivery |
 | `CALTOPO_ENDPOINT` | `caltopo.com` | CalTopo/SARTopo or local endpoint |
 | `CALTOPO_MAP_ID` | required when enabled | Destination map ID |
@@ -129,6 +130,10 @@ Keep the environment file root-readable because it contains CalTopo credentials:
 ```sh
 chmod 600 /etc/meshtastic-caltopo-bridge.env
 ```
+
+For radio troubleshooting, set `BRIDGE_DEBUG=true` or pass `-debug`. Debug
+output includes raw serial data and complete decoded messages, which may expose
+private message content and radio configuration. Disable it after troubleshooting.
 
 The map has no authentication. To access it from another computer, explicitly
 bind it to a network interface and restrict port `8080` to trusted clients.
