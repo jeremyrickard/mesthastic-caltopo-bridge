@@ -68,7 +68,10 @@ func run(logger *slog.Logger) error {
 			return err
 		}
 		defer adapter.Close()
-		worker = caltopo.NewWorker(database, adapter, logger, cfg.CalTopo.Timeout)
+		worker = caltopo.NewWorker(database, adapter, logger, cfg.CalTopo.Timeout, caltopo.FilterConfig{
+			MovementMeters: cfg.CalTopo.Movement,
+			Heartbeat:      cfg.CalTopo.Heartbeat,
+		})
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
@@ -95,6 +98,8 @@ func run(logger *slog.Logger) error {
 		"database", cfg.DatabasePath,
 		"http_listen_address", cfg.HTTPListenAddress,
 		"caltopo_enabled", cfg.CalTopo.Enabled,
+		"caltopo_movement_meters", cfg.CalTopo.Movement,
+		"caltopo_heartbeat", cfg.CalTopo.Heartbeat,
 		"decode_position_app", cfg.DecodePositionApp,
 		"debug", cfg.Debug,
 	)

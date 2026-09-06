@@ -133,6 +133,8 @@ normal service configuration mechanism.
 | `CALTOPO_ACCOUNT_ID` | empty | Account ID used by `gotopo` |
 | `CALTOPO_GROUP` | `mesh` | Fleet group; cannot contain `-` |
 | `CALTOPO_TIMEOUT` | `10s` | Per-request deadline |
+| `CALTOPO_MOVEMENT_METERS` | `25` | Minimum median-filtered movement before an update |
+| `CALTOPO_HEARTBEAT` | `5m` | Maximum interval between updates for a stationary node |
 
 Keep the environment file root-readable because it contains CalTopo credentials:
 
