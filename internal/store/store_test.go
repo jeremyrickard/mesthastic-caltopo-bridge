@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -78,6 +79,74 @@ func TestArchiveDeduplicatesPositionsButRetainsPackets(t *testing.T) {
 	}
 }
 
+func TestArchiveDeduplicatesSameFixAcrossPositionPorts(t *testing.T) {
+	ctx := context.Background()
+	database, err := Open(ctx, filepath.Join(t.TempDir(), "bridge.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	fixTime := time.Now().UTC().Truncate(time.Second)
+	for _, sourcePort := range []int32{3, 72} {
+		packet := model.Packet{
+			From: 7, MeshPacketID: uint32(sourcePort), Port: sourcePort,
+			ReceivedAt: fixTime, RawPayload: []byte{byte(sourcePort)}, ParseStatus: "position",
+		}
+		position := &model.Position{
+			SourceNode: 7, MeshPacketID: uint32(sourcePort), SourcePort: sourcePort,
+			Callsign: "!00000007", Latitude: 40, Longitude: -105,
+			SourceTime: fixTime, ReceivedAt: fixTime,
+		}
+		if _, _, _, err := database.Archive(ctx, packet, position, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var positionCount, deliveryCount int
+	if err := database.db.QueryRow("SELECT COUNT(*) FROM tak_positions").Scan(&positionCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.db.QueryRow("SELECT COUNT(*) FROM caltopo_deliveries").Scan(&deliveryCount); err != nil {
+		t.Fatal(err)
+	}
+	if positionCount != 1 || deliveryCount != 1 {
+		t.Fatalf("positions=%d deliveries=%d", positionCount, deliveryCount)
+	}
+}
+
+func TestArchiveStoresPositionAppMetadata(t *testing.T) {
+	ctx := context.Background()
+	database, err := Open(ctx, filepath.Join(t.TempDir(), "bridge.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	now := time.Now().UTC()
+	packet := model.Packet{From: 8, MeshPacketID: 9, Port: 3, ReceivedAt: now, ParseStatus: "position"}
+	altitude := 1700.0
+	position := &model.Position{
+		SourceNode: 8, MeshPacketID: 9, SourcePort: 3, Callsign: "!00000008",
+		Latitude: 39, Longitude: -104, Altitude: &altitude,
+		LocationSource: "LOC_EXTERNAL", PrecisionBits: 12,
+		SourceTime: now, ReceivedAt: now,
+	}
+	if _, _, inserted, err := database.Archive(ctx, packet, position, false); err != nil || !inserted {
+		t.Fatalf("inserted=%v err=%v", inserted, err)
+	}
+	positions, err := database.Positions(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(positions) != 1 || positions[0].SourcePort != 3 ||
+		positions[0].LocationSource != "LOC_EXTERNAL" ||
+		positions[0].PrecisionBits != 12 ||
+		positions[0].Altitude == nil || *positions[0].Altitude != altitude {
+		t.Fatalf("positions=%+v", positions)
+	}
+}
+
 func TestPositionsReturnsEmptySlice(t *testing.T) {
 	database, err := Open(context.Background(), filepath.Join(t.TempDir(), "bridge.db"))
 	if err != nil {
@@ -91,6 +160,64 @@ func TestPositionsReturnsEmptySlice(t *testing.T) {
 	}
 	if positions == nil || len(positions) != 0 {
 		t.Fatalf("positions=%v", positions)
+	}
+}
+
+func TestOpenMigratesPositionMetadataColumns(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "bridge.db")
+	legacy, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := legacy.Exec(`
+		CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
+		INSERT INTO schema_migrations VALUES (1, '2026-01-01T00:00:00Z');
+		CREATE TABLE tak_positions (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			packet_id INTEGER NOT NULL,
+			dedupe_key TEXT NOT NULL UNIQUE,
+			source_node INTEGER NOT NULL,
+			mesh_packet_id INTEGER NOT NULL,
+			callsign TEXT NOT NULL,
+			device_callsign TEXT,
+			latitude REAL NOT NULL,
+			longitude REAL NOT NULL,
+			altitude REAL,
+			speed REAL,
+			course REAL,
+			source_time TEXT NOT NULL,
+			received_at TEXT NOT NULL
+		)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	database, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	tx, err := database.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, column := range []string{"source_port", "location_source", "precision_bits"} {
+		exists, err := tableHasColumn(ctx, tx, "tak_positions", column)
+		if err != nil || !exists {
+			t.Fatalf("column %q exists=%v err=%v", column, exists, err)
+		}
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	var applied bool
+	if err := database.db.QueryRow(
+		"SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = 2)",
+	).Scan(&applied); err != nil || !applied {
+		t.Fatalf("migration applied=%v err=%v", applied, err)
 	}
 }
 

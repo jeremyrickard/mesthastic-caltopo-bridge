@@ -66,6 +66,26 @@ func TestParseDebug(t *testing.T) {
 	}
 }
 
+func TestParsePositionAppDecoding(t *testing.T) {
+	t.Setenv("MESHTASTIC_SERIAL_DEVICE", "/dev/test")
+	cfg, err := Parse(nil, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.DecodePositionApp {
+		t.Fatal("position app decoding should default to enabled")
+	}
+
+	t.Setenv("DECODE_POSITION_APP", "false")
+	cfg, err = Parse(nil, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DecodePositionApp {
+		t.Fatal("position app decoding was not disabled")
+	}
+}
+
 func TestParseRejectsInvalidEnvironmentValue(t *testing.T) {
 	t.Setenv("MESHTASTIC_SERIAL_BAUD", "fast")
 	if _, err := Parse([]string{"-list-devices"}, io.Discard); err == nil {

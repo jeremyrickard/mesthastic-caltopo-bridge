@@ -1,9 +1,9 @@
 # Meshtastic TAK to CalTopo Bridge
 
 A Go daemon that reads Meshtastic packets over USB serial, stores them in
-SQLite, decodes legacy ATAK position reports, and optionally publishes positions
-as CalTopo live tracks. It also serves a Leaflet map of each node's latest
-position.
+SQLite, decodes Meshtastic and legacy ATAK position reports, and optionally
+publishes positions as CalTopo live tracks. It also serves a Leaflet map of each
+node's latest position.
 
 Supported runtime targets:
 
@@ -14,14 +14,17 @@ Supported runtime targets:
 
 ## Current protocol scope
 
-The bridge decodes position reports from Meshtastic port 72 (`ATAK_PLUGIN`),
-used by current `TAK` and `TAK_TRACKER` firmware roles. Every received mesh
-packet is archived, including raw decoded payloads or ciphertext. Ports 78
-(`ATAK_PLUGIN_V2`) and 257 (`ATAK_FORWARDER`) are identified and stored but are
-not decoded because their encodings and ecosystem support are still evolving.
-Compressed legacy reports retain their PLI data; when their unishox2 callsign
-cannot be decoded, the bridge uses the originating node ID as the track name and
-records `tak_callsign_undecodable` as the packet parse status.
+The bridge decodes standard Meshtastic positions from port 3 (`POSITION_APP`)
+and legacy ATAK position reports from port 72 (`ATAK_PLUGIN`). This supports
+ordinary `CLIENT` nodes as well as `TAK` and `TAK_TRACKER` roles. Port 3 reports
+retain their location source and configured coordinate precision; reports with
+no GPS fix are archived as `position_no_fix` without creating a position.
+Every received mesh packet is archived, including raw decoded payloads or
+ciphertext. Ports 78 (`ATAK_PLUGIN_V2`) and 257 (`ATAK_FORWARDER`) are identified
+and stored but are not decoded because their encodings and ecosystem support are
+still evolving. Compressed legacy reports retain their PLI data; when their
+unishox2 callsign cannot be decoded, the bridge uses the originating node ID as
+the track name and records `tak_callsign_undecodable` as the packet parse status.
 
 The attached radio performs Meshtastic channel/PKI decryption before forwarding
 packets to the serial client. Configure the private channel key on the radio, not
@@ -119,6 +122,7 @@ normal service configuration mechanism.
 | `BRIDGE_DATABASE_PATH` | `bridge.db` | SQLite database |
 | `HTTP_LISTEN_ADDRESS` | `127.0.0.1:8080` | Position map listen address |
 | `BRIDGE_DEBUG` | `false` | Log every raw serial read and decoded radio message |
+| `DECODE_POSITION_APP` | `true` | Decode standard position packets on port 3 |
 | `CALTOPO_ENABLED` | `false` | Enable live-track delivery |
 | `CALTOPO_ENDPOINT` | `caltopo.com` | CalTopo/SARTopo or local endpoint |
 | `CALTOPO_MAP_ID` | required when enabled | Destination map ID |
@@ -149,7 +153,7 @@ process umask. Correct permissions manually when upgrading an existing install.
 SQLite runs in WAL mode and stores:
 
 - every received mesh packet and raw payload/ciphertext;
-- normalized legacy TAK position reports;
+- normalized Meshtastic and legacy TAK position reports, including their source port;
 - stable Meshtastic node-to-CalTopo live-track mappings;
 - durable CalTopo delivery attempts and error details.
 

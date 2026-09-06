@@ -43,6 +43,71 @@ func TestDecodeLegacyPosition(t *testing.T) {
 	}
 }
 
+func TestDecodePositionApp(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		locationSource pb.Position_LocSource
+	}{
+		{"internal GPS", pb.Position_LOC_INTERNAL},
+		{"external GPS", pb.Position_LOC_EXTERNAL},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			meshPosition := &pb.Position{
+				Time:           1_700_000_000,
+				LocationSource: test.locationSource,
+				PrecisionBits:  14,
+			}
+			meshPosition.SetLatitudeI(398765432)
+			meshPosition.SetLongitudeI(-1041234567)
+			meshPosition.SetAltitude(1734)
+			payload, err := proto.Marshal(meshPosition)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			record, position := Decode(decodedPacket(pb.PortNum_POSITION_APP, payload), time.Unix(1_700_000_100, 0))
+			if record.ParseStatus != "position" || position == nil {
+				t.Fatalf("status=%q error=%q position=%v", record.ParseStatus, record.ParseError, position)
+			}
+			if math.Abs(position.Latitude-39.8765432) > 1e-9 ||
+				math.Abs(position.Longitude+104.1234567) > 1e-9 ||
+				position.Altitude == nil || *position.Altitude != 1734 {
+				t.Fatalf("unexpected position: %+v", position)
+			}
+			if position.SourcePort != int32(pb.PortNum_POSITION_APP) ||
+				position.LocationSource != test.locationSource.String() ||
+				position.PrecisionBits != 14 {
+				t.Fatalf("unexpected metadata: %+v", position)
+			}
+			if !position.SourceTime.Equal(time.Unix(1_700_000_000, 0)) {
+				t.Fatalf("source time=%v", position.SourceTime)
+			}
+		})
+	}
+}
+
+func TestDecodePositionAppWithoutFix(t *testing.T) {
+	payload, err := proto.Marshal(&pb.Position{LocationSource: pb.Position_LOC_EXTERNAL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, position := Decode(decodedPacket(pb.PortNum_POSITION_APP, payload), time.Now())
+	if record.ParseStatus != "position_no_fix" || position != nil {
+		t.Fatalf("status=%q error=%q position=%v", record.ParseStatus, record.ParseError, position)
+	}
+}
+
+func TestDecodePositionAppCanBeDisabled(t *testing.T) {
+	record, position := DecodeWithOptions(
+		decodedPacket(pb.PortNum_POSITION_APP, []byte{0xff}),
+		time.Now(),
+		DecodeOptions{DecodePositionApp: false},
+	)
+	if record.ParseStatus != "position_app_disabled" || position != nil {
+		t.Fatalf("status=%q error=%q position=%v", record.ParseStatus, record.ParseError, position)
+	}
+}
+
 func TestDecodeCompressedFirmwarePositions(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -121,7 +186,7 @@ func TestDecodeClassifiesTraffic(t *testing.T) {
 		{
 			name:   "standard position",
 			packet: decodedPacket(pb.PortNum_POSITION_APP, []byte{0xff}),
-			status: "non_tak",
+			status: "malformed",
 		},
 		{
 			name:   "malformed",

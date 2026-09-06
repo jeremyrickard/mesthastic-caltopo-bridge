@@ -16,10 +16,11 @@ type Archiver interface {
 }
 
 type Service struct {
-	Store          Archiver
-	EnqueueCalTopo bool
-	WakeDeliveries func()
-	Logger         *slog.Logger
+	Store             Archiver
+	EnqueueCalTopo    bool
+	DecodePositionApp bool
+	WakeDeliveries    func()
+	Logger            *slog.Logger
 
 	mu               sync.Mutex
 	lastEncryptedLog time.Time
@@ -46,7 +47,9 @@ func (s *Service) Handle(ctx context.Context, message *pb.FromRadio) error {
 	if packet == nil {
 		return nil
 	}
-	record, position := tak.Decode(packet, time.Now().UTC())
+	record, position := tak.DecodeWithOptions(packet, time.Now().UTC(), tak.DecodeOptions{
+		DecodePositionApp: s.DecodePositionApp,
+	})
 	packetID, positionID, inserted, err := s.Store.Archive(ctx, record, position, s.EnqueueCalTopo)
 	if err != nil {
 		return err
@@ -55,7 +58,7 @@ func (s *Service) Handle(ctx context.Context, message *pb.FromRadio) error {
 		s.logEncrypted(logger, record)
 	}
 	if position != nil && inserted {
-		logger.Info("archived TAK position",
+		logger.Info("archived position",
 			"packet_row_id", packetID,
 			"position_row_id", positionID,
 			"source", position.SourceID(),

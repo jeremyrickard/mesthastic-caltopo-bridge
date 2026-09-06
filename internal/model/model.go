@@ -27,6 +27,7 @@ type Position struct {
 	PacketID       int64
 	SourceNode     uint32
 	MeshPacketID   uint32
+	SourcePort     int32
 	Callsign       string
 	DeviceCallsign string
 	Latitude       float64
@@ -34,6 +35,8 @@ type Position struct {
 	Altitude       *float64
 	Speed          *float64
 	Course         *float64
+	LocationSource string
+	PrecisionBits  uint32
 	SourceTime     time.Time
 	ReceivedAt     time.Time
 }
