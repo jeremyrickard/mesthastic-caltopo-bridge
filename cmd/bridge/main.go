@@ -77,9 +77,10 @@ func run(logger *slog.Logger) error {
 	}
 
 	service := &ingest.Service{
-		Store:          database,
-		EnqueueCalTopo: cfg.CalTopo.Enabled,
-		Logger:         logger,
+		Store:             database,
+		EnqueueCalTopo:    cfg.CalTopo.Enabled,
+		DecodePositionApp: cfg.DecodePositionApp,
+		Logger:            logger,
 	}
 	if worker != nil {
 		service.WakeDeliveries = worker.Wake
@@ -93,6 +94,7 @@ func run(logger *slog.Logger) error {
 		"database", cfg.DatabasePath,
 		"http_listen_address", cfg.HTTPListenAddress,
 		"caltopo_enabled", cfg.CalTopo.Enabled,
+		"decode_position_app", cfg.DecodePositionApp,
 		"debug", cfg.Debug,
 	)
 

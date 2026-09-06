@@ -17,6 +17,7 @@ type Config struct {
 	DatabasePath      string
 	HTTPListenAddress string
 	Debug             bool
+	DecodePositionApp bool
 	ListDevices       bool
 	Version           bool
 	CalTopo           CalTopo
@@ -50,12 +51,17 @@ func Parse(args []string, stderr io.Writer) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	decodePositionApp, err := envBool("DECODE_POSITION_APP", true)
+	if err != nil {
+		return Config{}, err
+	}
 	cfg := Config{
 		SerialDevice:      env("MESHTASTIC_SERIAL_DEVICE", ""),
 		SerialBaud:        serialBaud,
 		DatabasePath:      env("BRIDGE_DATABASE_PATH", "bridge.db"),
 		HTTPListenAddress: env("HTTP_LISTEN_ADDRESS", "127.0.0.1:8080"),
 		Debug:             debug,
+		DecodePositionApp: decodePositionApp,
 		CalTopo: CalTopo{
 			Enabled:      calTopoEnabled,
 			Endpoint:     env("CALTOPO_ENDPOINT", "caltopo.com"),

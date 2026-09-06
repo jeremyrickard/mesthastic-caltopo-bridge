@@ -55,7 +55,74 @@ func (s *Store) initialize(ctx context.Context) error {
 			return fmt.Errorf("initialize SQLite database: %w", err)
 		}
 	}
+	return s.migrate(ctx)
+}
+
+func (s *Store) migrate(ctx context.Context) error {
+	var applied bool
+	if err := s.db.QueryRowContext(ctx,
+		"SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = 2)",
+	).Scan(&applied); err != nil {
+		return fmt.Errorf("query schema migration: %w", err)
+	}
+	if applied {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin schema migration: %w", err)
+	}
+	defer tx.Rollback()
+	for _, migration := range []struct {
+		column    string
+		statement string
+	}{
+		{"source_port", "ALTER TABLE tak_positions ADD COLUMN source_port INTEGER NOT NULL DEFAULT 72"},
+		{"location_source", "ALTER TABLE tak_positions ADD COLUMN location_source TEXT"},
+		{"precision_bits", "ALTER TABLE tak_positions ADD COLUMN precision_bits INTEGER NOT NULL DEFAULT 0"},
+	} {
+		exists, err := tableHasColumn(ctx, tx, "tak_positions", migration.column)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			if _, err := tx.ExecContext(ctx, migration.statement); err != nil {
+				return fmt.Errorf("add tak_positions.%s: %w", migration.column, err)
+			}
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO schema_migrations(version, applied_at)
+		VALUES (2, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`); err != nil {
+		return fmt.Errorf("record schema migration 2: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit schema migration 2: %w", err)
+	}
 	return nil
+}
+
+func tableHasColumn(ctx context.Context, tx *sql.Tx, table, column string) (bool, error) {
+	rows, err := tx.QueryContext(ctx, "PRAGMA table_info("+table+")")
+	if err != nil {
+		return false, fmt.Errorf("inspect %s schema: %w", table, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, columnType string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return false, fmt.Errorf("scan %s schema: %w", table, err)
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, fmt.Errorf("iterate %s schema: %w", table, err)
+	}
+	return false, nil
 }
 
 func (s *Store) Close() error {
@@ -103,31 +170,39 @@ func (s *Store) Archive(ctx context.Context, packet model.Packet, position *mode
 		return packetID, 0, false, nil
 	}
 
-	dedupeKey := positionKey(packet, *position)
-	result, err = tx.ExecContext(ctx, `
-		INSERT INTO tak_positions (
-			packet_id, dedupe_key, source_node, mesh_packet_id, callsign,
-			device_callsign, latitude, longitude, altitude, speed, course,
-			source_time, received_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(dedupe_key) DO NOTHING`,
-		packetID, dedupeKey, position.SourceNode, position.MeshPacketID,
-		position.Callsign, nullableString(position.DeviceCallsign),
-		position.Latitude, position.Longitude, position.Altitude, position.Speed,
-		position.Course, formatTime(position.SourceTime), formatTime(position.ReceivedAt),
-	)
-	if err != nil {
-		return 0, 0, false, fmt.Errorf("insert TAK position: %w", err)
+	sourcePort := position.SourcePort
+	if sourcePort == 0 {
+		sourcePort = packet.Port
 	}
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return 0, 0, false, fmt.Errorf("read TAK position insertion result: %w", err)
-	}
-	if rows == 0 {
+	dedupeKey := positionKey(*position)
+	var existingID int64
+	err = tx.QueryRowContext(ctx,
+		"SELECT id FROM tak_positions WHERE dedupe_key = ?",
+		dedupeKey,
+	).Scan(&existingID)
+	if err == nil {
 		if err := tx.Commit(); err != nil {
 			return 0, 0, false, fmt.Errorf("commit duplicate packet archive: %w", err)
 		}
-		return packetID, 0, false, nil
+		return packetID, existingID, false, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return 0, 0, false, fmt.Errorf("query duplicate position: %w", err)
+	}
+	result, err = tx.ExecContext(ctx, `
+		INSERT INTO tak_positions (
+			packet_id, dedupe_key, source_node, mesh_packet_id, source_port, callsign,
+			device_callsign, latitude, longitude, altitude, speed, course,
+			location_source, precision_bits, source_time, received_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		packetID, dedupeKey, position.SourceNode, position.MeshPacketID, sourcePort,
+		position.Callsign, nullableString(position.DeviceCallsign),
+		position.Latitude, position.Longitude, position.Altitude, position.Speed,
+		position.Course, nullableString(position.LocationSource), position.PrecisionBits,
+		formatTime(position.SourceTime), formatTime(position.ReceivedAt),
+	)
+	if err != nil {
+		return 0, 0, false, fmt.Errorf("insert position: %w", err)
 	}
 	positionID, err := result.LastInsertId()
 	if err != nil {
@@ -150,9 +225,10 @@ func (s *Store) Archive(ctx context.Context, packet model.Packet, position *mode
 
 func (s *Store) PendingDeliveries(ctx context.Context, limit int) ([]Delivery, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT d.id, d.attempts, p.id, p.source_node, p.mesh_packet_id,
+		SELECT d.id, d.attempts, p.id, p.source_node, p.mesh_packet_id, p.source_port,
 		       p.callsign, COALESCE(p.device_callsign, ''), p.latitude, p.longitude,
-		       p.altitude, p.speed, p.course, p.source_time, p.received_at
+		       p.altitude, p.speed, p.course, COALESCE(p.location_source, ''),
+		       p.precision_bits, p.source_time, p.received_at
 		FROM caltopo_deliveries d
 		JOIN tak_positions p ON p.id = d.position_id
 		WHERE d.state = 'pending' AND d.next_attempt_at <= ?
@@ -181,9 +257,11 @@ func (s *Store) PendingDeliveries(ctx context.Context, limit int) ([]Delivery, e
 		if err := rows.Scan(
 			&delivery.ID, &delivery.Attempts, &delivery.Position.PacketID,
 			&delivery.Position.SourceNode, &delivery.Position.MeshPacketID,
+			&delivery.Position.SourcePort,
 			&delivery.Position.Callsign, &delivery.Position.DeviceCallsign,
 			&delivery.Position.Latitude, &delivery.Position.Longitude,
-			&altitude, &speed, &course, &sourceTime, &receivedAt,
+			&altitude, &speed, &course, &delivery.Position.LocationSource,
+			&delivery.Position.PrecisionBits, &sourceTime, &receivedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan pending CalTopo delivery: %w", err)
 		}
@@ -208,9 +286,10 @@ func (s *Store) PendingDeliveries(ctx context.Context, limit int) ([]Delivery, e
 
 func (s *Store) Positions(ctx context.Context) ([]model.Position, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT p.id, p.source_node, p.mesh_packet_id, p.callsign,
+		SELECT p.id, p.source_node, p.mesh_packet_id, p.source_port, p.callsign,
 		       COALESCE(p.device_callsign, ''), p.latitude, p.longitude,
-		       p.altitude, p.speed, p.course, p.source_time, p.received_at
+		       p.altitude, p.speed, p.course, COALESCE(p.location_source, ''),
+		       p.precision_bits, p.source_time, p.received_at
 		FROM tak_positions p
 		WHERE NOT EXISTS (
 			SELECT 1
@@ -234,9 +313,11 @@ func (s *Store) Positions(ctx context.Context) ([]model.Position, error) {
 		var sourceTime, receivedAt string
 		if err := rows.Scan(
 			&position.PacketID, &position.SourceNode, &position.MeshPacketID,
+			&position.SourcePort,
 			&position.Callsign, &position.DeviceCallsign,
 			&position.Latitude, &position.Longitude,
-			&altitude, &speed, &course, &sourceTime, &receivedAt,
+			&altitude, &speed, &course, &position.LocationSource,
+			&position.PrecisionBits, &sourceTime, &receivedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan TAK position: %w", err)
 		}
@@ -316,15 +397,10 @@ func (s *Store) SaveTrack(ctx context.Context, sourceID, deviceID, trackID strin
 	return nil
 }
 
-func positionKey(packet model.Packet, position model.Position) string {
-	const dedupeWindow = 15 * time.Minute
-	bucket := packet.ReceivedAt.Unix() / int64(dedupeWindow/time.Second)
-	if packet.RadioRxTime != nil {
-		bucket = packet.RadioRxTime.Unix() / int64(dedupeWindow/time.Second)
-	}
+func positionKey(position model.Position) string {
 	sum := sha256.Sum256([]byte(fmt.Sprintf(
-		"%08x:%08x:%d:%.7f:%.7f:%x", packet.From, packet.MeshPacketID,
-		bucket, position.Latitude, position.Longitude, packet.RawPayload,
+		"%08x:%.7f:%.7f:%s", position.SourceNode,
+		position.Latitude, position.Longitude, formatTime(position.SourceTime),
 	)))
 	return fmt.Sprintf("%x", sum[:])
 }
@@ -416,6 +492,7 @@ CREATE TABLE IF NOT EXISTS tak_positions (
 	dedupe_key TEXT NOT NULL UNIQUE,
 	source_node INTEGER NOT NULL,
 	mesh_packet_id INTEGER NOT NULL,
+	source_port INTEGER NOT NULL DEFAULT 72,
 	callsign TEXT NOT NULL,
 	device_callsign TEXT,
 	latitude REAL NOT NULL CHECK(latitude BETWEEN -90 AND 90),
@@ -423,6 +500,8 @@ CREATE TABLE IF NOT EXISTS tak_positions (
 	altitude REAL,
 	speed REAL,
 	course REAL,
+	location_source TEXT,
+	precision_bits INTEGER NOT NULL DEFAULT 0,
 	source_time TEXT NOT NULL,
 	received_at TEXT NOT NULL
 );

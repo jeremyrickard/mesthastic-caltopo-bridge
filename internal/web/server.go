@@ -18,6 +18,7 @@ type PositionStore interface {
 
 type positionResponse struct {
 	SourceID       string    `json:"source_id"`
+	SourcePort     int32     `json:"source_port"`
 	Callsign       string    `json:"callsign"`
 	DeviceCallsign string    `json:"device_callsign,omitempty"`
 	Latitude       float64   `json:"latitude"`
@@ -25,6 +26,8 @@ type positionResponse struct {
 	Altitude       *float64  `json:"altitude,omitempty"`
 	Speed          *float64  `json:"speed,omitempty"`
 	Course         *float64  `json:"course,omitempty"`
+	LocationSource string    `json:"location_source,omitempty"`
+	PrecisionBits  uint32    `json:"precision_bits,omitempty"`
 	SourceTime     time.Time `json:"source_time"`
 	ReceivedAt     time.Time `json:"received_at"`
 }
@@ -65,6 +68,7 @@ func servePositions(store PositionStore, logger *slog.Logger) http.HandlerFunc {
 		for _, position := range positions {
 			response = append(response, positionResponse{
 				SourceID:       position.SourceID(),
+				SourcePort:     position.SourcePort,
 				Callsign:       position.Callsign,
 				DeviceCallsign: position.DeviceCallsign,
 				Latitude:       position.Latitude,
@@ -72,6 +76,8 @@ func servePositions(store PositionStore, logger *slog.Logger) http.HandlerFunc {
 				Altitude:       position.Altitude,
 				Speed:          position.Speed,
 				Course:         position.Course,
+				LocationSource: position.LocationSource,
+				PrecisionBits:  position.PrecisionBits,
 				SourceTime:     position.SourceTime,
 				ReceivedAt:     position.ReceivedAt,
 			})

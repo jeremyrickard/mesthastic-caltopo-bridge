@@ -16,7 +16,15 @@ import (
 
 var ErrNotPosition = errors.New("TAK packet is not a position report")
 
+type DecodeOptions struct {
+	DecodePositionApp bool
+}
+
 func Decode(packet *pb.MeshPacket, receivedAt time.Time) (model.Packet, *model.Position) {
+	return DecodeWithOptions(packet, receivedAt, DecodeOptions{DecodePositionApp: true})
+}
+
+func DecodeWithOptions(packet *pb.MeshPacket, receivedAt time.Time, options DecodeOptions) (model.Packet, *model.Position) {
 	rawPacket, marshalErr := proto.Marshal(packet)
 	record := model.Packet{
 		From:         packet.GetFrom(),
@@ -55,6 +63,22 @@ func Decode(packet *pb.MeshPacket, receivedAt time.Time) (model.Packet, *model.P
 	record.Port = int32(data.GetPortnum())
 	record.RawPayload = append([]byte(nil), data.GetPayload()...)
 	switch data.GetPortnum() {
+	case pb.PortNum_POSITION_APP:
+		if !options.DecodePositionApp {
+			record.ParseStatus = "position_app_disabled"
+			break
+		}
+		position, noFix, err := decodePositionApp(record, data.GetPayload())
+		switch {
+		case err != nil:
+			record.ParseStatus = "malformed"
+			record.ParseError = err.Error()
+		case noFix:
+			record.ParseStatus = "position_no_fix"
+		default:
+			record.ParseStatus = "position"
+			return record, position
+		}
 	case pb.PortNum_ATAK_PLUGIN:
 		position, callsignUndecodable, err := decodeLegacy(record, data.GetPayload())
 		switch {
@@ -79,6 +103,34 @@ func Decode(packet *pb.MeshPacket, receivedAt time.Time) (model.Packet, *model.P
 		record.ParseStatus = "non_tak"
 	}
 	return record, nil
+}
+
+func decodePositionApp(packet model.Packet, payload []byte) (*model.Position, bool, error) {
+	var meshPosition pb.Position
+	if err := proto.Unmarshal(payload, &meshPosition); err != nil {
+		return nil, false, fmt.Errorf("decode Meshtastic position: %w", err)
+	}
+	if meshPosition.GetLatitudeI() == 0 && meshPosition.GetLongitudeI() == 0 {
+		return nil, true, nil
+	}
+	position, err := newPosition(
+		packet,
+		float64(meshPosition.GetLatitudeI())*1e-7,
+		float64(meshPosition.GetLongitudeI())*1e-7,
+	)
+	if err != nil {
+		return nil, false, err
+	}
+	if meshPosition.HasAltitude() {
+		altitude := float64(meshPosition.GetAltitude())
+		position.Altitude = &altitude
+	}
+	if fixTime := meshPosition.GetTime(); fixTime != 0 {
+		position.SourceTime = time.Unix(int64(fixTime), 0).UTC()
+	}
+	position.LocationSource = meshPosition.GetLocationSource().String()
+	position.PrecisionBits = meshPosition.GetPrecisionBits()
+	return position, false, nil
 }
 
 func decodeLegacy(packet model.Packet, payload []byte) (*model.Position, bool, error) {
@@ -147,6 +199,7 @@ func newPosition(packet model.Packet, latitude, longitude float64) (*model.Posit
 	position := &model.Position{
 		SourceNode:   packet.From,
 		MeshPacketID: packet.MeshPacketID,
+		SourcePort:   packet.Port,
 		Callsign:     model.NodeID(packet.From),
 		Latitude:     latitude,
 		Longitude:    longitude,
