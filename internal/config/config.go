@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -32,6 +33,8 @@ type CalTopo struct {
 	AccountID    string
 	Group        string
 	Timeout      time.Duration
+	Movement     float64
+	Heartbeat    time.Duration
 }
 
 func Parse(args []string, stderr io.Writer) (Config, error) {
@@ -44,6 +47,14 @@ func Parse(args []string, stderr io.Writer) (Config, error) {
 		return Config{}, err
 	}
 	calTopoTimeout, err := envDuration("CALTOPO_TIMEOUT", 10*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+	calTopoMovement, err := envFloat("CALTOPO_MOVEMENT_METERS", 25)
+	if err != nil {
+		return Config{}, err
+	}
+	calTopoHeartbeat, err := envDuration("CALTOPO_HEARTBEAT", 5*time.Minute)
 	if err != nil {
 		return Config{}, err
 	}
@@ -71,6 +82,8 @@ func Parse(args []string, stderr io.Writer) (Config, error) {
 			AccountID:    env("CALTOPO_ACCOUNT_ID", ""),
 			Group:        env("CALTOPO_GROUP", "mesh"),
 			Timeout:      calTopoTimeout,
+			Movement:     calTopoMovement,
+			Heartbeat:    calTopoHeartbeat,
 		},
 	}
 
@@ -87,6 +100,8 @@ func Parse(args []string, stderr io.Writer) (Config, error) {
 	fs.StringVar(&cfg.CalTopo.Endpoint, "caltopo-endpoint", cfg.CalTopo.Endpoint, "CalTopo endpoint")
 	fs.StringVar(&cfg.CalTopo.MapID, "caltopo-map", cfg.CalTopo.MapID, "CalTopo map ID")
 	fs.StringVar(&cfg.CalTopo.Group, "caltopo-group", cfg.CalTopo.Group, "CalTopo fleet group")
+	fs.Float64Var(&cfg.CalTopo.Movement, "caltopo-movement", cfg.CalTopo.Movement, "minimum CalTopo movement in meters")
+	fs.DurationVar(&cfg.CalTopo.Heartbeat, "caltopo-heartbeat", cfg.CalTopo.Heartbeat, "maximum interval between CalTopo updates")
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
 	}
@@ -128,6 +143,12 @@ func (c Config) Validate() error {
 		if c.CalTopo.Timeout <= 0 {
 			errs = append(errs, errors.New("CalTopo timeout must be positive"))
 		}
+		if c.CalTopo.Movement <= 0 || math.IsNaN(c.CalTopo.Movement) || math.IsInf(c.CalTopo.Movement, 0) {
+			errs = append(errs, errors.New("CalTopo movement threshold must be positive"))
+		}
+		if c.CalTopo.Heartbeat <= 0 {
+			errs = append(errs, errors.New("CalTopo heartbeat must be positive"))
+		}
 	}
 	return errors.Join(errs...)
 }
@@ -154,6 +175,18 @@ func envInt(key string, fallback int) (int, error) {
 	parsed, err := strconv.Atoi(value)
 	if err != nil {
 		return 0, fmt.Errorf("%s must be an integer: %w", key, err)
+	}
+	return parsed, nil
+}
+
+func envFloat(key string, fallback float64) (float64, error) {
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		return fallback, nil
+	}
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a number: %w", key, err)
 	}
 	return parsed, nil
 }

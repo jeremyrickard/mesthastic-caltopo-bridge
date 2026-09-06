@@ -3,6 +3,7 @@ package config
 import (
 	"io"
 	"testing"
+	"time"
 )
 
 func TestParseRequiresSerialDevice(t *testing.T) {
@@ -30,6 +31,9 @@ func TestParseAllowsLocalCalTopoWithoutCredentials(t *testing.T) {
 	}
 	if !cfg.CalTopo.Enabled {
 		t.Fatal("CalTopo was not enabled")
+	}
+	if cfg.CalTopo.Movement != 25 || cfg.CalTopo.Heartbeat != 5*time.Minute {
+		t.Fatalf("CalTopo filter defaults=%+v", cfg.CalTopo)
 	}
 }
 
