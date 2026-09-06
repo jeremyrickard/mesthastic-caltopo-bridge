@@ -86,6 +86,48 @@ func TestAdapterCreatesAndUpdatesLiveTrack(t *testing.T) {
 	}
 }
 
+func TestAdapterRecreatesMissingStoredLiveTrack(t *testing.T) {
+	var created bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/since/0":
+			io.WriteString(w, `{"status":"ok","result":{"ids":{},"state":{"features":[]},"timestamp":1}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/LiveTrack":
+			created = true
+			io.WriteString(w, `{"status":"ok","result":{"type":"Feature","id":"track-new","properties":{"class":"LiveTrack","title":"Rescue 42","deviceId":"FLEET:mesh-0000002a"}}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/position/report/mesh":
+			io.WriteString(w, `{}`)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	tracks := &memoryTrackStore{
+		sourceID: "!0000002a",
+		deviceID: "mesh-0000002a",
+		trackID:  "track-deleted",
+	}
+	adapter, err := New(context.Background(), config.CalTopo{
+		Endpoint: server.URL, MapID: "ABC", Group: "mesh", Timeout: time.Second,
+	}, tracks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer adapter.Close()
+
+	position := model.Position{
+		SourceNode: 42, Callsign: "Rescue 42", Latitude: 40, Longitude: -105,
+	}
+	if err := adapter.Publish(context.Background(), position); err != nil {
+		t.Fatal(err)
+	}
+	if !created || tracks.trackID != "track-new" {
+		t.Fatalf("created=%v mapping=%+v", created, tracks)
+	}
+}
+
 type memoryTrackStore struct {
 	sourceID string
 	deviceID string
