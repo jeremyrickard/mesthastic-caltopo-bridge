@@ -1,0 +1,88 @@
+syntax = "proto3";
+
+package takproto;
+
+option go_package = "github.com/jeremyrickard/mesthastic-caltopo-bridge/internal/takproto";
+
+message TAKPacket {
+  bool is_compressed = 1;
+  Contact contact = 2;
+  Group group = 3;
+  Status status = 4;
+
+  oneof payload_variant {
+    PLI pli = 5;
+    GeoChat chat = 6;
+    bytes detail = 7;
+  }
+}
+
+message GeoChat {
+  enum ReceiptType {
+    ReceiptType_None = 0;
+    ReceiptType_Delivered = 1;
+    ReceiptType_Read = 2;
+  }
+
+  string message = 1;
+  optional string to = 2;
+  optional string to_callsign = 3;
+  string receipt_for_uid = 4;
+  ReceiptType receipt_type = 5;
+  optional string lang = 6;
+  optional string room_id = 7;
+  optional string voice_profile_id = 8;
+}
+
+message Group {
+  MemberRole role = 1;
+  Team team = 2;
+}
+
+enum Team {
+  Unspecifed_Color = 0;
+  White = 1;
+  Yellow = 2;
+  Orange = 3;
+  Magenta = 4;
+  Red = 5;
+  Maroon = 6;
+  Purple = 7;
+  Dark_Blue = 8;
+  Blue = 9;
+  Cyan = 10;
+  Teal = 11;
+  Green = 12;
+  Dark_Green = 13;
+  Brown = 14;
+}
+
+enum MemberRole {
+  Unspecifed = 0;
+  TeamMember = 1;
+  TeamLead = 2;
+  HQ = 3;
+  Sniper = 4;
+  Medic = 5;
+  ForwardObserver = 6;
+  RTO = 7;
+  K9 = 8;
+}
+
+message Status {
+  uint32 battery = 1;
+}
+
+message Contact {
+  // These are strings upstream, but firmware stores unishox2 bytes when compressed.
+  bytes callsign = 1;
+  bytes device_callsign = 2;
+}
+
+message PLI {
+  sfixed32 latitude_i = 1;
+  sfixed32 longitude_i = 2;
+  int32 altitude = 3;
+  uint32 speed = 4;
+  uint32 course = 5;
+}

@@ -6,16 +6,15 @@ import (
 	"math"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	pb "buf.build/gen/go/meshtastic/protobufs/protocolbuffers/go/meshtastic"
 	"github.com/jeremyrickard/mesthastic-caltopo-bridge/internal/model"
+	"github.com/jeremyrickard/mesthastic-caltopo-bridge/internal/takproto"
 	"google.golang.org/protobuf/proto"
 )
 
-var (
-	ErrNotPosition = errors.New("TAK packet is not a position report")
-	ErrCompressed  = errors.New("compressed legacy TAK packet requires firmware decompression")
-)
+var ErrNotPosition = errors.New("TAK packet is not a position report")
 
 func Decode(packet *pb.MeshPacket, receivedAt time.Time) (model.Packet, *model.Position) {
 	rawPacket, marshalErr := proto.Marshal(packet)
@@ -57,15 +56,17 @@ func Decode(packet *pb.MeshPacket, receivedAt time.Time) (model.Packet, *model.P
 	record.RawPayload = append([]byte(nil), data.GetPayload()...)
 	switch data.GetPortnum() {
 	case pb.PortNum_ATAK_PLUGIN:
-		position, err := decodeLegacy(record, data.GetPayload())
+		position, callsignUndecodable, err := decodeLegacy(record, data.GetPayload())
 		switch {
 		case err == nil:
-			record.ParseStatus = "position"
+			if callsignUndecodable {
+				record.ParseStatus = "tak_callsign_undecodable"
+			} else {
+				record.ParseStatus = "position"
+			}
 			return record, position
 		case errors.Is(err, ErrNotPosition):
 			record.ParseStatus = "tak_non_position"
-		case errors.Is(err, ErrCompressed):
-			record.ParseStatus = "tak_compressed"
 		default:
 			record.ParseStatus = "malformed"
 			record.ParseError = err.Error()
@@ -80,26 +81,25 @@ func Decode(packet *pb.MeshPacket, receivedAt time.Time) (model.Packet, *model.P
 	return record, nil
 }
 
-func decodeLegacy(packet model.Packet, payload []byte) (*model.Position, error) {
-	var takPacket pb.TAKPacket
+func decodeLegacy(packet model.Packet, payload []byte) (*model.Position, bool, error) {
+	var takPacket takproto.TAKPacket
 	if err := proto.Unmarshal(payload, &takPacket); err != nil {
-		return nil, fmt.Errorf("decode legacy TAK packet: %w", err)
-	}
-	if takPacket.GetIsCompressed() {
-		return nil, ErrCompressed
+		return nil, false, fmt.Errorf("decode legacy TAK packet: %w", err)
 	}
 	pli := takPacket.GetPli()
 	if pli == nil {
-		return nil, ErrNotPosition
+		return nil, false, ErrNotPosition
 	}
 	latitude := float64(pli.GetLatitudeI()) * 1e-7
 	longitude := float64(pli.GetLongitudeI()) * 1e-7
 	position, err := newPosition(packet, latitude, longitude)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	position.Callsign = strings.TrimSpace(takPacket.GetContact().GetCallsign())
-	position.DeviceCallsign = strings.TrimSpace(takPacket.GetContact().GetDeviceCallsign())
+	callsign, deviceCallsign, callsignUndecodable :=
+		decodeCallsigns(takPacket.GetContact(), takPacket.GetIsCompressed())
+	position.Callsign = callsign
+	position.DeviceCallsign = deviceCallsign
 	if position.Callsign == "" {
 		position.Callsign = model.NodeID(packet.From)
 	}
@@ -115,7 +115,22 @@ func decodeLegacy(packet model.Packet, payload []byte) (*model.Position, error) 
 		value := float64(course)
 		position.Course = &value
 	}
-	return position, nil
+	return position, callsignUndecodable, nil
+}
+
+func decodeCallsigns(contact *takproto.Contact, compressed bool) (string, string, bool) {
+	if contact == nil {
+		return "", "", false
+	}
+	callsign := contact.GetCallsign()
+	deviceCallsign := contact.GetDeviceCallsign()
+	if compressed {
+		return "", "", len(callsign) > 0 || len(deviceCallsign) > 0
+	}
+	if !utf8.Valid(callsign) || !utf8.Valid(deviceCallsign) {
+		return "", "", true
+	}
+	return strings.TrimSpace(string(callsign)), strings.TrimSpace(string(deviceCallsign)), false
 }
 
 func newPosition(packet model.Packet, latitude, longitude float64) (*model.Position, error) {
