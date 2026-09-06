@@ -163,6 +163,50 @@ func TestPositionsReturnsEmptySlice(t *testing.T) {
 	}
 }
 
+func TestNodeCallsignPrefersShortNameAndUpdatesFallbackPositions(t *testing.T) {
+	ctx := context.Background()
+	database, err := Open(ctx, filepath.Join(t.TempDir(), "bridge.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	now := time.Now().UTC()
+	node := uint32(0x12f47fb2)
+	packet := model.Packet{
+		From: node, MeshPacketID: 1, Port: 3, ReceivedAt: now, ParseStatus: "position",
+	}
+	position := &model.Position{
+		SourceNode: node, MeshPacketID: 1, SourcePort: 3, Callsign: model.NodeID(node),
+		Latitude: 38.9, Longitude: -104.7, SourceTime: now, ReceivedAt: now,
+	}
+	if _, _, _, err := database.Archive(ctx, packet, position, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.UpsertNode(ctx, node, "R12", "Rescue Twelve"); err != nil {
+		t.Fatal(err)
+	}
+	callsign, err := database.NodeCallsign(ctx, node)
+	if err != nil || callsign != "R12" {
+		t.Fatalf("callsign=%q err=%v", callsign, err)
+	}
+	positions, err := database.Positions(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(positions) != 1 || positions[0].Callsign != "R12" {
+		t.Fatalf("positions=%+v", positions)
+	}
+
+	if err := database.UpsertNode(ctx, node, "", "Rescue Twelve"); err != nil {
+		t.Fatal(err)
+	}
+	callsign, err = database.NodeCallsign(ctx, node)
+	if err != nil || callsign != "Rescue Twelve" {
+		t.Fatalf("fallback callsign=%q err=%v", callsign, err)
+	}
+}
+
 func TestOpenMigratesPositionMetadataColumns(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "bridge.db")
@@ -218,6 +262,11 @@ func TestOpenMigratesPositionMetadataColumns(t *testing.T) {
 		"SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = 2)",
 	).Scan(&applied); err != nil || !applied {
 		t.Fatalf("migration applied=%v err=%v", applied, err)
+	}
+	if err := database.db.QueryRow(
+		"SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = 3)",
+	).Scan(&applied); err != nil || !applied {
+		t.Fatalf("node migration applied=%v err=%v", applied, err)
 	}
 }
 

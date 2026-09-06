@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/jeremyrickard/mesthastic-caltopo-bridge/internal/model"
@@ -65,39 +66,45 @@ func (s *Store) migrate(ctx context.Context) error {
 	).Scan(&applied); err != nil {
 		return fmt.Errorf("query schema migration: %w", err)
 	}
-	if applied {
-		return nil
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin schema migration: %w", err)
-	}
-	defer tx.Rollback()
-	for _, migration := range []struct {
-		column    string
-		statement string
-	}{
-		{"source_port", "ALTER TABLE tak_positions ADD COLUMN source_port INTEGER NOT NULL DEFAULT 72"},
-		{"location_source", "ALTER TABLE tak_positions ADD COLUMN location_source TEXT"},
-		{"precision_bits", "ALTER TABLE tak_positions ADD COLUMN precision_bits INTEGER NOT NULL DEFAULT 0"},
-	} {
-		exists, err := tableHasColumn(ctx, tx, "tak_positions", migration.column)
+	if !applied {
+		tx, err := s.db.BeginTx(ctx, nil)
 		if err != nil {
-			return err
+			return fmt.Errorf("begin schema migration: %w", err)
 		}
-		if !exists {
-			if _, err := tx.ExecContext(ctx, migration.statement); err != nil {
-				return fmt.Errorf("add tak_positions.%s: %w", migration.column, err)
+		defer tx.Rollback()
+		for _, migration := range []struct {
+			column    string
+			statement string
+		}{
+			{"source_port", "ALTER TABLE tak_positions ADD COLUMN source_port INTEGER NOT NULL DEFAULT 72"},
+			{"location_source", "ALTER TABLE tak_positions ADD COLUMN location_source TEXT"},
+			{"precision_bits", "ALTER TABLE tak_positions ADD COLUMN precision_bits INTEGER NOT NULL DEFAULT 0"},
+		} {
+			exists, err := tableHasColumn(ctx, tx, "tak_positions", migration.column)
+			if err != nil {
+				return err
+			}
+			if !exists {
+				if _, err := tx.ExecContext(ctx, migration.statement); err != nil {
+					return fmt.Errorf("add tak_positions.%s: %w", migration.column, err)
+				}
 			}
 		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO schema_migrations(version, applied_at)
+			VALUES (2, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`); err != nil {
+			return fmt.Errorf("record schema migration 2: %w", err)
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit schema migration 2: %w", err)
+		}
 	}
-	if _, err := tx.ExecContext(ctx, `
+
+	if _, err := s.db.ExecContext(ctx, `
 		INSERT INTO schema_migrations(version, applied_at)
-		VALUES (2, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`); err != nil {
-		return fmt.Errorf("record schema migration 2: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit schema migration 2: %w", err)
+		VALUES (3, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+		ON CONFLICT(version) DO NOTHING`); err != nil {
+		return fmt.Errorf("record schema migration 3: %w", err)
 	}
 	return nil
 }
@@ -127,6 +134,66 @@ func tableHasColumn(ctx context.Context, tx *sql.Tx, table, column string) (bool
 
 func (s *Store) Close() error {
 	return s.db.Close()
+}
+
+func (s *Store) UpsertNode(ctx context.Context, node uint32, shortName, longName string) error {
+	shortName = strings.TrimSpace(shortName)
+	longName = strings.TrimSpace(longName)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin node update: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO mesh_nodes (node_num, short_name, long_name, updated_at)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(node_num) DO UPDATE SET
+			short_name = excluded.short_name,
+			long_name = excluded.long_name,
+			updated_at = excluded.updated_at`,
+		node, shortName, longName, formatTime(time.Now().UTC()),
+	); err != nil {
+		return fmt.Errorf("upsert mesh node: %w", err)
+	}
+	callsign := shortName
+	if callsign == "" {
+		callsign = longName
+	}
+	if callsign != "" {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE tak_positions
+			SET callsign = ?
+			WHERE source_node = ? AND callsign = ?`,
+			callsign, node, model.NodeID(node),
+		); err != nil {
+			return fmt.Errorf("update node position callsigns: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit node update: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) NodeCallsign(ctx context.Context, node uint32) (string, error) {
+	var shortName, longName string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT short_name, long_name
+		FROM mesh_nodes
+		WHERE node_num = ?`,
+		node,
+	).Scan(&shortName, &longName)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("query mesh node: %w", err)
+	}
+	if shortName != "" {
+		return shortName, nil
+	}
+	return longName, nil
 }
 
 func (s *Store) Archive(ctx context.Context, packet model.Packet, position *model.Position, enqueue bool) (int64, int64, bool, error) {
@@ -485,6 +552,13 @@ CREATE TABLE IF NOT EXISTS mesh_packets (
 );
 CREATE INDEX IF NOT EXISTS mesh_packets_received_at_idx ON mesh_packets(received_at);
 CREATE INDEX IF NOT EXISTS mesh_packets_source_idx ON mesh_packets(source_node, mesh_packet_id);
+
+CREATE TABLE IF NOT EXISTS mesh_nodes (
+	node_num INTEGER PRIMARY KEY,
+	short_name TEXT NOT NULL,
+	long_name TEXT NOT NULL,
+	updated_at TEXT NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS tak_positions (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,

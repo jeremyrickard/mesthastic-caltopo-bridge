@@ -18,7 +18,9 @@ The bridge decodes standard Meshtastic positions from port 3 (`POSITION_APP`)
 and legacy ATAK position reports from port 72 (`ATAK_PLUGIN`). This supports
 ordinary `CLIENT` nodes as well as `TAK` and `TAK_TRACKER` roles. Port 3 reports
 retain their location source and configured coordinate precision; reports with
-no GPS fix are archived as `position_no_fix` without creating a position.
+no GPS fix are archived as `position_no_fix` without creating a position. The
+bridge associates these reports with persisted Meshtastic node information,
+preferring each radio's short name and falling back to its long name.
 Every received mesh packet is archived, including raw decoded payloads or
 ciphertext. Ports 78 (`ATAK_PLUGIN_V2`) and 257 (`ATAK_FORWARDER`) are identified
 and stored but are not decoded because their encodings and ecosystem support are
