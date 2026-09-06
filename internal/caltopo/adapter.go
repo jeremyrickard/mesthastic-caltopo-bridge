@@ -2,6 +2,7 @@ package caltopo
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -56,16 +57,32 @@ func (a *Adapter) Publish(ctx context.Context, position model.Position) error {
 		return err
 	}
 	if !exists {
-		deviceID := a.group + "-" + strings.TrimPrefix(sourceID, "!")
-		trackID, err = a.reconcileOrCreate(ctx, deviceID, position.Callsign)
+		trackID, err = a.createAndSaveTrack(ctx, sourceID, position.Callsign)
 		if err != nil {
 			return err
 		}
-		if err := a.store.SaveTrack(ctx, sourceID, deviceID, trackID); err != nil {
-			return err
-		}
+	}
+	err = a.client.UpdateLiveTrack(ctx, trackID, position.Latitude, position.Longitude, position.Altitude)
+	if !errors.Is(err, gotopo.ErrNotFound) {
+		return err
+	}
+	trackID, err = a.createAndSaveTrack(ctx, sourceID, position.Callsign)
+	if err != nil {
+		return err
 	}
 	return a.client.UpdateLiveTrack(ctx, trackID, position.Latitude, position.Longitude, position.Altitude)
+}
+
+func (a *Adapter) createAndSaveTrack(ctx context.Context, sourceID, title string) (string, error) {
+	deviceID := a.group + "-" + strings.TrimPrefix(sourceID, "!")
+	trackID, err := a.reconcileOrCreate(ctx, deviceID, title)
+	if err != nil {
+		return "", err
+	}
+	if err := a.store.SaveTrack(ctx, sourceID, deviceID, trackID); err != nil {
+		return "", err
+	}
+	return trackID, nil
 }
 
 func (a *Adapter) ensureOpen(ctx context.Context) error {
