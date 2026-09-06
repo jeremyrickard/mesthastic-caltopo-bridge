@@ -9,14 +9,21 @@ import (
 	pb "buf.build/gen/go/meshtastic/protobufs/protocolbuffers/go/meshtastic"
 	"github.com/jeremyrickard/mesthastic-caltopo-bridge/internal/model"
 	"github.com/jeremyrickard/mesthastic-caltopo-bridge/internal/tak"
+	"google.golang.org/protobuf/proto"
 )
 
 type Archiver interface {
 	Archive(context.Context, model.Packet, *model.Position, bool) (int64, int64, bool, error)
 }
 
+type NodeDirectory interface {
+	UpsertNode(context.Context, uint32, string, string) error
+	NodeCallsign(context.Context, uint32) (string, error)
+}
+
 type Service struct {
 	Store             Archiver
+	Nodes             NodeDirectory
 	EnqueueCalTopo    bool
 	DecodePositionApp bool
 	WakeDeliveries    func()
@@ -43,13 +50,33 @@ func (s *Service) Handle(ctx context.Context, message *pb.FromRadio) error {
 		logger.Info("Meshtastic configuration received", "config_id", configID)
 		return nil
 	}
+	if nodeInfo := message.GetNodeInfo(); nodeInfo != nil {
+		return s.rememberNode(ctx, nodeInfo.GetNum(), nodeInfo.GetUser())
+	}
 	packet := message.GetPacket()
 	if packet == nil {
 		return nil
 	}
+	if data := packet.GetDecoded(); data != nil && data.GetPortnum() == pb.PortNum_NODEINFO_APP {
+		var user pb.User
+		if err := proto.Unmarshal(data.GetPayload(), &user); err != nil {
+			logger.Warn("could not decode Meshtastic node info", "source", model.NodeID(packet.GetFrom()), "error", err)
+		} else if err := s.rememberNode(ctx, packet.GetFrom(), &user); err != nil {
+			return err
+		}
+	}
 	record, position := tak.DecodeWithOptions(packet, time.Now().UTC(), tak.DecodeOptions{
 		DecodePositionApp: s.DecodePositionApp,
 	})
+	if position != nil && position.Callsign == position.SourceID() && s.Nodes != nil {
+		callsign, err := s.Nodes.NodeCallsign(ctx, position.SourceNode)
+		if err != nil {
+			return err
+		}
+		if callsign != "" {
+			position.Callsign = callsign
+		}
+	}
 	packetID, positionID, inserted, err := s.Store.Archive(ctx, record, position, s.EnqueueCalTopo)
 	if err != nil {
 		return err
@@ -71,6 +98,13 @@ func (s *Service) Handle(ctx context.Context, message *pb.FromRadio) error {
 		}
 	}
 	return nil
+}
+
+func (s *Service) rememberNode(ctx context.Context, node uint32, user *pb.User) error {
+	if s.Nodes == nil || user == nil {
+		return nil
+	}
+	return s.Nodes.UpsertNode(ctx, node, user.GetShortName(), user.GetLongName())
 }
 
 func (s *Service) logEncrypted(logger *slog.Logger, packet model.Packet) {
