@@ -7,7 +7,7 @@ LDFLAGS := -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)
 export GOPRIVATE
 export GONOSUMDB := $(GOPRIVATE)
 
-.PHONY: build test race release clean
+.PHONY: build test race release generate clean
 
 build:
 	mkdir -p bin
@@ -18,6 +18,9 @@ test:
 
 race:
 	CGO_ENABLED=1 go test -race ./...
+
+generate:
+	protoc --go_out=. --go_opt=paths=source_relative internal/takproto/tak.proto
 
 release: clean
 	mkdir -p dist

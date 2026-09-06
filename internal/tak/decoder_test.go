@@ -1,18 +1,20 @@
 package tak
 
 import (
+	"encoding/hex"
 	"math"
 	"testing"
 	"time"
 
 	pb "buf.build/gen/go/meshtastic/protobufs/protocolbuffers/go/meshtastic"
+	"github.com/jeremyrickard/mesthastic-caltopo-bridge/internal/takproto"
 	"google.golang.org/protobuf/proto"
 )
 
 func TestDecodeLegacyPosition(t *testing.T) {
-	payload, err := proto.Marshal(&pb.TAKPacket{
-		Contact: &pb.Contact{Callsign: "Rescue 1", DeviceCallsign: "tracker"},
-		PayloadVariant: &pb.TAKPacket_Pli{Pli: &pb.PLI{
+	payload, err := proto.Marshal(&takproto.TAKPacket{
+		Contact: &takproto.Contact{Callsign: []byte("Rescue 1"), DeviceCallsign: []byte("tracker")},
+		PayloadVariant: &takproto.TAKPacket_Pli{Pli: &takproto.PLI{
 			LatitudeI:  398765432,
 			LongitudeI: -1041234567,
 			Altitude:   1734,
@@ -38,6 +40,58 @@ func TestDecodeLegacyPosition(t *testing.T) {
 	}
 	if !position.SourceTime.Equal(time.Unix(int64(rxTime), 0)) {
 		t.Fatalf("source time=%v", position.SourceTime)
+	}
+}
+
+func TestDecodeCompressedFirmwarePositions(t *testing.T) {
+	tests := []struct {
+		name      string
+		payload   string
+		latitude  int32
+		longitude int32
+		altitude  int32
+	}{
+		{
+			name:      "firmware capture one",
+			payload:   "080112120A078403090F25A2E712078403090F25A2E71A040801100A220208622A100DB6F4331715DADF97C1188010289027",
+			latitude:  389280950,
+			longitude: -1047011366,
+			altitude:  2048,
+		},
+		{
+			name:      "firmware capture two",
+			payload:   "080112120A078403090F25A2E312078403090F25A2E31A040801100A220208572A0D0DB6EA33171578D897C1188910",
+			latitude:  389278390,
+			longitude: -1047013256,
+			altitude:  2057,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			payload, err := hex.DecodeString(test.payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var takPacket takproto.TAKPacket
+			if err := proto.Unmarshal(payload, &takPacket); err != nil {
+				t.Fatal(err)
+			}
+			pli := takPacket.GetPli()
+			if !takPacket.GetIsCompressed() || pli == nil ||
+				pli.GetLatitudeI() != test.latitude ||
+				pli.GetLongitudeI() != test.longitude ||
+				pli.GetAltitude() != test.altitude {
+				t.Fatalf("compressed=%v pli=%+v", takPacket.GetIsCompressed(), pli)
+			}
+
+			record, position := Decode(decodedPacket(pb.PortNum_ATAK_PLUGIN, payload), time.Now())
+			if record.ParseStatus != "tak_callsign_undecodable" || position == nil {
+				t.Fatalf("status=%q error=%q position=%+v", record.ParseStatus, record.ParseError, position)
+			}
+			if position.Callsign != "!00001234" {
+				t.Fatalf("callsign=%q", position.Callsign)
+			}
+		})
 	}
 }
 
@@ -85,10 +139,17 @@ func TestDecodeClassifiesTraffic(t *testing.T) {
 	}
 }
 
-func TestDecodeCompressedLegacyPacketIsNotPublished(t *testing.T) {
-	payload, err := proto.Marshal(&pb.TAKPacket{
-		IsCompressed: true,
-		PayloadVariant: &pb.TAKPacket_Pli{Pli: &pb.PLI{
+func TestDecodeEmptyLegacyPacketIsNonPosition(t *testing.T) {
+	record, position := Decode(decodedPacket(pb.PortNum_ATAK_PLUGIN, nil), time.Now())
+	if record.ParseStatus != "tak_non_position" || position != nil {
+		t.Fatalf("status=%q error=%q position=%v", record.ParseStatus, record.ParseError, position)
+	}
+}
+
+func TestDecodeInvalidUncompressedCallsignDoesNotRejectPosition(t *testing.T) {
+	payload, err := proto.Marshal(&takproto.TAKPacket{
+		Contact: &takproto.Contact{Callsign: []byte{0xff}},
+		PayloadVariant: &takproto.TAKPacket_Pli{Pli: &takproto.PLI{
 			LatitudeI: 100, LongitudeI: 200,
 		}},
 	})
@@ -96,8 +157,11 @@ func TestDecodeCompressedLegacyPacketIsNotPublished(t *testing.T) {
 		t.Fatal(err)
 	}
 	record, position := Decode(decodedPacket(pb.PortNum_ATAK_PLUGIN, payload), time.Now())
-	if record.ParseStatus != "tak_compressed" || position != nil {
-		t.Fatalf("status=%q position=%v", record.ParseStatus, position)
+	if record.ParseStatus != "tak_callsign_undecodable" || position == nil {
+		t.Fatalf("status=%q error=%q position=%v", record.ParseStatus, record.ParseError, position)
+	}
+	if position.Callsign != "!00001234" {
+		t.Fatalf("callsign=%q", position.Callsign)
 	}
 }
 

@@ -19,6 +19,9 @@ used by current `TAK` and `TAK_TRACKER` firmware roles. Every received mesh
 packet is archived, including raw decoded payloads or ciphertext. Ports 78
 (`ATAK_PLUGIN_V2`) and 257 (`ATAK_FORWARDER`) are identified and stored but are
 not decoded because their encodings and ecosystem support are still evolving.
+Compressed legacy reports retain their PLI data; when their unishox2 callsign
+cannot be decoded, the bridge uses the originating node ID as the track name and
+records `tak_callsign_undecodable` as the packet parse status.
 
 The attached radio performs Meshtastic channel/PKI decryption before forwarding
 packets to the serial client. Configure the private channel key on the radio, not
